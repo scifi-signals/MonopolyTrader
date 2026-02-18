@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MonopolyTrader Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+
+        <!-- Header -->
+        <header>
+            <h1>MonopolyTrader</h1>
+            <div class="live-badge">
+                <div class="live-dot"></div>
+                <span id="live-price">Loading...</span>
+                <span id="update-time"></span>
+            </div>
+        </header>
+
+        <!-- Loading -->
+        <div id="loading" style="text-align:center;padding:60px;color:var(--text2)">Loading dashboard data...</div>
+
+        <!-- App -->
+        <div id="app" style="display:none">
+
+            <!-- Market Status Banner -->
+            <div id="status-banner" class="status-banner"></div>
+
+            <!-- KPI Strip -->
+            <div class="kpi-strip">
+                <div class="kpi">
+                    <div class="kpi-label">Portfolio Value</div>
+                    <div id="kpi-value"></div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Total P&L</div>
+                    <div id="kpi-pnl"></div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Cash</div>
+                    <div id="kpi-cash"></div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Trades</div>
+                    <div id="kpi-trades"></div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Win Rate</div>
+                    <div id="kpi-winrate"></div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">Prediction Accuracy</div>
+                    <div id="kpi-accuracy"></div>
+                </div>
+            </div>
+
+            <!-- Portfolio Chart -->
+            <div class="card">
+                <h2>Portfolio Value vs Buy & Hold</h2>
+                <div class="chart-container">
+                    <canvas id="portfolio-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Strategy Section -->
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Strategy Weights</h2>
+                    <div id="strategy-bars"></div>
+                </div>
+                <div class="card">
+                    <h2>Weight Evolution</h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="weight-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Predictions -->
+            <div class="card">
+                <h2>Prediction Scoreboard</h2>
+                <div style="overflow-x:auto">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Price</th>
+                                <th>Score</th>
+                                <th>Predictions</th>
+                                <th>Reasoning</th>
+                            </tr>
+                        </thead>
+                        <tbody id="predictions-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Trade Log -->
+            <div class="card">
+                <h2>Trade Log</h2>
+                <div style="overflow-x:auto">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Action</th>
+                                <th>Details</th>
+                                <th>Strategy</th>
+                                <th>P&L</th>
+                                <th>Hypothesis</th>
+                                <th>Review</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Knowledge Section -->
+            <div class="card">
+                <h2>Knowledge Base</h2>
+                <div class="tabs">
+                    <div class="tab active" data-tab="tab-lessons">Lessons</div>
+                    <div class="tab" data-tab="tab-patterns">Patterns</div>
+                    <div class="tab" data-tab="tab-journal">Journal</div>
+                </div>
+                <div id="tab-lessons" class="tab-content active">
+                    <div id="lessons-list"></div>
+                </div>
+                <div id="tab-patterns" class="tab-content">
+                    <div id="patterns-list"></div>
+                </div>
+                <div id="tab-journal" class="tab-content">
+                    <div class="journal-content" id="journal-content"></div>
+                </div>
+            </div>
+
+        </div><!-- /app -->
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

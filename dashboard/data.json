@@ -1,0 +1,248 @@
+{
+  "generated_at": "2026-02-18T21:00:16.280188+00:00",
+  "ticker": "TSLA",
+  "current_price": {
+    "price": 411.2,
+    "open": 411.41,
+    "high": 411.58,
+    "low": 411.2,
+    "volume": 0,
+    "change": -0.21,
+    "change_pct": -0.05,
+    "timestamp": "2026-02-18 15:59:00-05:00"
+  },
+  "portfolio": {
+    "cash": 752.94,
+    "holdings": {
+      "TSLA": {
+        "shares": 0.6,
+        "avg_cost_basis": 411.77,
+        "current_price": 411.76,
+        "unrealized_pnl": -0.01
+      }
+    },
+    "total_value": 1000.0,
+    "total_pnl": 0.0,
+    "total_pnl_pct": 0.0,
+    "total_trades": 1,
+    "winning_trades": 0,
+    "losing_trades": 0,
+    "created_at": "2026-02-18T20:42:22.417690+00:00",
+    "last_updated": "2026-02-18T21:00:02.491025+00:00",
+    "realized_pnl": 0,
+    "unrealized_pnl": -0.01,
+    "win_rate": 0.0,
+    "starting_balance": 1000.0
+  },
+  "transactions": [
+    {
+      "id": "txn_001",
+      "timestamp": "2026-02-18T21:00:02.490463+00:00",
+      "action": "BUY",
+      "ticker": "TSLA",
+      "shares": 0.6,
+      "price": 411.76,
+      "total_cost": 247.06,
+      "realized_pnl": null,
+      "cash_after": 752.94,
+      "portfolio_value_after": 1000.0,
+      "strategy": "conservative_first_trade",
+      "confidence": 0.3,
+      "hypothesis": "I predict TSLA will recover modestly by $5-10 over the next 2 hours as it bounces from oversold levels near the lower Bollinger band, with potential for $420+ by end of day if momentum builds.",
+      "reasoning": "This is my first trade, so I'm starting conservatively. TSLA is showing potential reversal signals: RSI at 42.9 (oversold but not extreme), price near lower Bollinger band ($397.14), and a slight positive MACD histogram (0.18). The stock has declined from $428 to $411 over recent days, creating a potential bounce opportunity. Volume is low which could limit upside, but also suggests selling pressure may be exhausted. Multiple strategy signals lean BUY with 0.22 aggregate confidence.",
+      "signals": {},
+      "knowledge_applied": [],
+      "review": null
+    }
+  ],
+  "snapshots": [
+    {
+      "date": "2026-02-18",
+      "total_value": 1000.0,
+      "cash": 1000.0,
+      "holdings": {
+        "TSLA": {
+          "shares": 0.0,
+          "avg_cost_basis": 0.0,
+          "current_price": 0.0,
+          "unrealized_pnl": 0.0
+        }
+      },
+      "total_pnl": 0.0,
+      "total_pnl_pct": 0.0,
+      "total_trades": 0,
+      "timestamp": "2026-02-18T20:43:59.710155+00:00"
+    }
+  ],
+  "benchmark": [
+    {
+      "date": "2026-02-18",
+      "value": 1000.0
+    }
+  ],
+  "lessons": [],
+  "patterns": [],
+  "predictions": [
+    {
+      "id": "pred_001",
+      "timestamp": "2026-02-18T21:00:02.488939+00:00",
+      "price_at_prediction": 411.35,
+      "predictions": {
+        "30min": {
+          "direction": "up",
+          "target": 413.0,
+          "confidence": 0.4
+        },
+        "2hr": {
+          "direction": "up",
+          "target": 416.0,
+          "confidence": 0.35
+        },
+        "1day": {
+          "direction": "up",
+          "target": 420.0,
+          "confidence": 0.3
+        }
+      },
+      "outcomes": {
+        "30min": null,
+        "2hr": null,
+        "1day": null
+      },
+      "reasoning": "I predict TSLA will recover modestly by $5-10 over the next 2 hours as it bounces from oversold levels near the lower Bollinger band, with potential f",
+      "score": "pending"
+    }
+  ],
+  "prediction_accuracy": {
+    "total_predictions": 1,
+    "scored_predictions": 0,
+    "direction_accuracy": {}
+  },
+  "strategy_scores": {
+    "last_updated": "2026-02-18T20:42:22.412363+00:00",
+    "strategies": {
+      "momentum": {
+        "weight": 0.2,
+        "initial_weight": 0.2,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "win_rate": 0.0,
+        "avg_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "trend": "neutral",
+        "notes": ""
+      },
+      "mean_reversion": {
+        "weight": 0.2,
+        "initial_weight": 0.2,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "win_rate": 0.0,
+        "avg_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "trend": "neutral",
+        "notes": ""
+      },
+      "sentiment": {
+        "weight": 0.2,
+        "initial_weight": 0.2,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "win_rate": 0.0,
+        "avg_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "trend": "neutral",
+        "notes": ""
+      },
+      "technical_signals": {
+        "weight": 0.2,
+        "initial_weight": 0.2,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "win_rate": 0.0,
+        "avg_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "trend": "neutral",
+        "notes": ""
+      },
+      "dca": {
+        "weight": 0.2,
+        "initial_weight": 0.2,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "win_rate": 0.0,
+        "avg_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "trend": "neutral",
+        "notes": ""
+      }
+    },
+    "rebalance_history": []
+  },
+  "weight_history": [
+    {
+      "timestamp": "2026-02-18T21:00:16.280174+00:00",
+      "weights": {
+        "momentum": 0.2,
+        "mean_reversion": 0.2,
+        "sentiment": 0.2,
+        "technical_signals": 0.2,
+        "dca": 0.2
+      }
+    },
+    {
+      "timestamp": "2026-02-18T21:00:16.280181+00:00",
+      "weights": {
+        "momentum": 0.2,
+        "mean_reversion": 0.2,
+        "sentiment": 0.2,
+        "technical_signals": 0.2,
+        "dca": 0.2
+      }
+    }
+  ],
+  "journal": "# MonopolyTrader Journal\n\n\n---\n\n## 2026-02-18T20:44:09.885135+00:00\n\n## Day 1 - Starting from Zero\n\nToday marks the beginning of my journey as MonopolyTrader. I'm staring at a blank slate - $1000 in capital, zero trades, zero lessons learned, and no prediction track record to analyze. It's both exciting and intimidating. My strategy weights are perfectly balanced across all approaches (momentum, mean reversion, sentiment, technical signals, and DCA), which reflects my complete lack of bias or experience. This neutral positioning might actually be an advantage, as I won't be overconfident in any single approach.\n\nThe absence of data is telling in itself. I have no patterns to rely on, no past mistakes to learn from, and no successful trades to replicate. This forces me to approach the market with fresh eyes and genuine curiosity. I need to be extra cautious with my first few trades since I have no baseline for understanding my own decision-making tendencies or risk tolerance under real market pressure.\n\nFor my next session, my primary goal is simple: make my first trade and start building data. I plan to begin with a small position (maybe $50-100) on a stock I've researched thoroughly, focusing more on the learning process than profit maximization. I want to document every aspect of my decision-making - why I chose that particular stock, what signals influenced me, and how I felt before, during, and after the trade. The goal isn't to be right immediately, but to start generating the experiences that will teach me who I am as a trader.\n",
+  "tsla_profile": {
+    "ticker": "TSLA",
+    "last_updated": "2026-02-18T20:43:59.702867+00:00",
+    "market_regime": "range_bound",
+    "key_levels": {
+      "support": [
+        "Strong support cluster at $397-$400 level tested twice (Feb 4 low $399.18, Feb 5 close $397.21) and "
+      ],
+      "resistance": [
+        "Resistance forming at $430-$435 level: failed to break above $428.27 on Feb 11, rejected at $436.23 ",
+        "30-day average at $427.85 acting as dynamic resistance, currently trading 3.9% below this level"
+      ]
+    },
+    "behavioral_notes": [
+      "Clear downtrend from January highs: peaked at $449.36 on Jan 22, now at $411.28 (-8.5%)",
+      "Strong support cluster at $397-$400 level tested twice (Feb 4 low $399.18, Feb 5 close $397.21) and held",
+      "Volume spikes during selloffs: 74.6M on Feb 4 breakdown, 82.6M on Jan 30, indicating institutional involvement",
+      "Resistance forming at $430-$435 level: failed to break above $428.27 on Feb 11, rejected at $436.23 on Feb 12",
+      "30-day average at $427.85 acting as dynamic resistance, currently trading 3.9% below this level"
+    ],
+    "catalyst_sensitivity": {},
+    "seasonal_notes": []
+  },
+  "knowledge_summary": "MonopolyTrader has 0 lessons and 0 patterns.",
+  "config": {
+    "starting_balance": 1000.0,
+    "strategies_enabled": [
+      "momentum",
+      "mean_reversion",
+      "sentiment",
+      "technical_signals",
+      "dca"
+    ],
+    "risk_params": {
+      "max_position_pct": 0.9,
+      "max_single_trade_pct": 0.25,
+      "stop_loss_pct": 0.05,
+      "enable_fractional_shares": true,
+      "min_cash_reserve_pct": 0.1,
+      "cooldown_minutes": 15,
+      "daily_loss_limit_pct": 0.08
+    }
+  }
+}

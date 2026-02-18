@@ -1,0 +1,36 @@
+{
+  "ticker": "TSLA",
+  "starting_balance": 1000.00,
+  "currency": "Monopoly Dollars",
+  "poll_interval_minutes": 5,
+  "market_hours": {
+    "open": "09:30",
+    "close": "16:00",
+    "timezone": "America/New_York"
+  },
+  "risk_params": {
+    "max_position_pct": 0.90,
+    "max_single_trade_pct": 0.25,
+    "stop_loss_pct": 0.05,
+    "enable_fractional_shares": true,
+    "min_cash_reserve_pct": 0.10,
+    "cooldown_minutes": 15,
+    "daily_loss_limit_pct": 0.08
+  },
+  "slippage_pct": 0.001,
+  "anthropic_model": "claude-sonnet-4-20250514",
+  "strategies_enabled": [
+    "momentum",
+    "mean_reversion",
+    "sentiment",
+    "technical_signals",
+    "dca"
+  ],
+  "learning": {
+    "research_on_startup": true,
+    "review_after_every_trade": true,
+    "deep_research_interval_hours": 24,
+    "journal_entry_interval_hours": 12,
+    "prediction_horizon_minutes": [30, 120, 1440]
+  }
+}

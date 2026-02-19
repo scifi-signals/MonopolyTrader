@@ -2,22 +2,43 @@
   "ticker": "TSLA",
   "starting_balance": 1000.00,
   "currency": "Monopoly Dollars",
-  "poll_interval_minutes": 5,
+  "poll_interval_minutes": 15,
   "market_hours": {
     "open": "09:30",
     "close": "16:00",
     "timezone": "America/New_York"
   },
   "risk_params": {
-    "max_position_pct": 0.90,
-    "max_single_trade_pct": 0.25,
-    "stop_loss_pct": 0.05,
+    "max_position_pct": 0.65,
+    "max_single_trade_pct": 0.20,
+    "stop_loss_method": "dynamic_atr",
+    "stop_loss_atr_multipliers": {
+      "low_vix": 2.0,
+      "normal_vix": 2.5,
+      "high_vix": 3.0,
+      "vix_thresholds": [20, 30]
+    },
+    "position_sizing_method": "inverse_atr",
+    "max_risk_per_trade_pct": 0.02,
     "enable_fractional_shares": true,
-    "min_cash_reserve_pct": 0.10,
+    "min_cash_reserve_pct": 0.15,
     "cooldown_minutes": 15,
-    "daily_loss_limit_pct": 0.08
+    "daily_loss_limit_pct": 0.08,
+    "slippage_per_side_pct": 0.0005,
+    "slippage_volatile_per_side_pct": 0.0015,
+    "earnings_blackout_hours": 48,
+    "macro_gate": {
+      "spy_daily_drop_threshold": -0.02,
+      "vix_threshold": 30,
+      "elevated_confidence_required": 0.80
+    },
+    "kill_switches": {
+      "negative_accuracy_trend_days": 30,
+      "max_drawdown_from_peak_pct": 0.15,
+      "critical_alerts_in_7_days": 3,
+      "style_drift_winrate_drop_pct": 0.30
+    }
   },
-  "slippage_pct": 0.001,
   "anthropic_model": "claude-sonnet-4-20250514",
   "strategies_enabled": [
     "momentum",
@@ -32,5 +53,24 @@
     "deep_research_interval_hours": 24,
     "journal_entry_interval_hours": 12,
     "prediction_horizon_minutes": [30, 120, 1440]
+  },
+  "benchmarks": {
+    "enabled": true,
+    "random_trader_count": 100,
+    "update_frequency": "daily"
+  },
+  "graduation": {
+    "min_trading_days": 90,
+    "min_trades": 50,
+    "min_percentile_vs_random": 75,
+    "min_sharpe_ratio": 0.5,
+    "max_drawdown_pct": 15,
+    "min_prediction_accuracy_pct": 55,
+    "min_regime_diversity": 2
+  },
+  "bsm": {
+    "enabled": false,
+    "signal_path": "data/bsm_signals/latest_signals.json",
+    "conviction_cap_pct": 0.10
   }
 }

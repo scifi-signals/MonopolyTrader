@@ -25,16 +25,18 @@ def _get_client() -> Anthropic:
     return Anthropic(api_key=api_key)
 
 
-def _call_claude(system: str, user: str, max_tokens: int = 2000) -> str:
+def _call_claude(system: str, user: str, max_tokens: int = 2000) -> tuple[str, str]:
+    """Call Claude and return (response_text, model_version)."""
     config = load_config()
     client = _get_client()
+    model = config["anthropic_model"]
     response = client.messages.create(
-        model=config["anthropic_model"],
+        model=model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return response.content[0].text.strip()
+    return response.content[0].text.strip(), model
 
 
 def _parse_json(raw: str):
@@ -112,8 +114,9 @@ Recent price action for context:
 Provide specific, actionable trading rules based on earnings patterns."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         add_research("earnings_history", findings)
         logger.info(f"Earnings research complete: {len(findings.get('key_findings', []))} findings")
         return findings
@@ -142,8 +145,9 @@ Recent price action:
 For each catalyst type, provide: typical magnitude, duration, and a trading rule."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         add_research("catalyst_events", findings)
         logger.info(f"Catalyst research complete: {len(findings.get('key_findings', []))} findings")
         return findings
@@ -172,8 +176,9 @@ Recent price action:
 Identify the strongest correlations and any leading indicators."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         add_research("correlation_notes", findings)
         logger.info(f"Correlation research complete: {len(findings.get('key_findings', []))} findings")
         return findings
@@ -202,8 +207,9 @@ Recent price action:
 Focus on statistically meaningful patterns with enough history to be reliable."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         add_research("seasonal_patterns", findings)
         logger.info(f"Seasonal research complete: {len(findings.get('key_findings', []))} findings")
         return findings
@@ -231,8 +237,9 @@ Based on the price action and your knowledge up to early 2025:
 Provide a current assessment with specific price levels and scenarios."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         add_research("sector_context", findings)
 
         # Update TSLA profile with current context
@@ -265,8 +272,9 @@ Context — recent {ticker} price action:
 Research this topic thoroughly. Provide specific, actionable findings."""
 
     try:
-        raw = _call_claude(RESEARCH_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(RESEARCH_SYSTEM, user_prompt)
         findings = _parse_json(raw)
+        findings["model_version"] = model_ver
         # Store with sanitized topic name
         safe_topic = topic[:50].replace(" ", "_").replace("/", "_").lower()
         add_research(f"ondemand_{safe_topic}", findings)

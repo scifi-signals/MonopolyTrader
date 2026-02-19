@@ -8,13 +8,15 @@ MonopolyTrader is an autonomous AI-powered paper trading agent that manages a vi
 
 ## Core Philosophy: Learn, Don't Just Trade
 
-The agent operates on three principles:
+The agent operates on four principles:
 
 1. **Every trade is a hypothesis.** When the agent buys, it's saying "I believe X will happen because of Y." When the outcome is known, it compares prediction vs. reality and logs what it learned.
 
 2. **Memory compounds into wisdom.** The agent maintains a growing "knowledge base" about TSLA — how it reacts to earnings, Elon's tweets, macro events, sector rotations, and seasonal patterns. This knowledge is built through both active research and post-trade reflection.
 
 3. **Strategies earn trust.** Each strategy starts with equal weight. Over time, the agent adjusts confidence in each strategy based on real performance data. Strategies that consistently fail get deprioritized. New hybrid approaches can emerge from patterns the agent notices.
+
+4. **Be a scientific instrument, not a storyteller.** LLMs are very good at inventing confident causal explanations after the fact. The agent must resist narrative lock-in. Every lesson must be structured, falsifiable, and challenged by a built-in Skeptic layer. If the agent can't prove a lesson with data, it's a story, not a signal. Let data overrule good stories.
 
 ---
 
@@ -82,7 +84,12 @@ The agent operates on three principles:
 ```
 monopoly-trader/
 ├── CLAUDE.md                 # This file — project spec and instructions
-├── config.json               # Configuration (ticker, API keys, risk params)
+├── config.json               # Global configuration
+├── agents/                   # Per-agent configurations (see multi-agent-ensemble-spec.md)
+│   ├── alpha.json            # The Technician — pure technical analysis
+│   ├── bravo.json            # The Insider — sentiment + BSM focused
+│   ├── echo.json             # The Generalist — balanced learner
+│   └── foxtrot.json          # The Contrarian — fades consensus
 ├── requirements.txt          # Python dependencies
 │
 ├── data/
@@ -107,14 +114,19 @@ monopoly-trader/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py               # Entry point — scheduler + main loop
-│   ├── agent.py              # Claude-powered decision engine
+│   ├── ensemble.py           # Multi-agent orchestrator (runs all agents in parallel)
+│   ├── comparison.py         # Agent comparison: leaderboard, correlation, harmony
+│   ├── meta_learner.py       # Cross-agent analysis, regime detection, suggestions
+│   ├── agent.py              # Claude-powered decision engine (per-agent instance)
 │   ├── market_data.py        # Price fetching + technical indicators
 │   ├── portfolio.py          # Portfolio management + trade execution
+│   ├── benchmarks.py         # Benchmark tracking, graduation criteria, random trader simulation
 │   ├── strategies.py         # Strategy definitions + signal generators
 │   ├── researcher.py         # Deep research engine — studies TSLA history
 │   ├── learner.py            # Post-trade review + knowledge extraction
 │   ├── knowledge_base.py     # Read/write to the knowledge/ directory
 │   ├── reporter.py           # Dashboard HTML generation
+│   ├── observability.py      # Anomaly detection, decision tracing, health checks
 │   └── utils.py              # Shared helpers (logging, time, formatting)
 │
 ├── dashboard/
@@ -125,7 +137,13 @@ monopoly-trader/
 │
 └── logs/
     ├── agent.log             # Agent decision log
-    └── trades.log            # Trade execution log
+    ├── trades.log            # Trade execution log
+    ├── alerts.json           # Active and resolved anomaly alerts
+    ├── traces/               # Full decision traces per cycle
+    │   └── YYYY-MM-DD/
+    │       └── trace_HHMMSS.json
+    └── costs/                # Daily API cost reports
+        └── YYYY-MM-DD.json
 ```
 
 ---
@@ -138,17 +156,48 @@ monopoly-trader/
   "ticker": "TSLA",
   "starting_balance": 1000.00,
   "currency": "Monopoly Dollars",
-  "poll_interval_minutes": 5,
+  "poll_interval_minutes": 15,
   "market_hours": {
     "open": "09:30",
     "close": "16:00",
     "timezone": "America/New_York"
   },
   "risk_params": {
-    "max_position_pct": 0.90,
-    "max_single_trade_pct": 0.25,
-    "stop_loss_pct": 0.05,
-    "enable_fractional_shares": true
+    "max_position_pct": 0.65,
+    "max_single_trade_pct": 0.20,
+    "stop_loss_method": "dynamic_atr",
+    "stop_loss_atr_multipliers": {
+      "low_vix": 2.0,
+      "normal_vix": 2.5,
+      "high_vix": 3.0,
+      "vix_thresholds": [20, 30]
+    },
+    "position_sizing_method": "inverse_atr",
+    "max_risk_per_trade_pct": 0.02,
+    "min_cash_reserve_pct": 0.15,
+    "enable_fractional_shares": true,
+    "slippage_per_side_pct": 0.0005,
+    "slippage_volatile_per_side_pct": 0.0015,
+    "slippage_note": "0.05% baseline, but real bid-ask on 15-min TSLA bars can hit 0.15-0.30% round-trip on volatile days. Use volatile rate when VIX > 25.",
+    "earnings_blackout_hours": 48,
+    "gap_risk_size_reduction_pct": 0.50,
+    "bsm_conviction_cap_pct": 0.10,
+    "macro_gate": {
+      "spy_daily_drop_threshold": -0.02,
+      "vix_threshold": 30,
+      "elevated_confidence_required": 0.80
+    },
+    "kill_switches": {
+      "negative_accuracy_trend_days": 30,
+      "max_drawdown_from_peak_pct": 0.15,
+      "critical_alerts_in_7_days": 3,
+      "style_drift_winrate_drop_pct": 0.30
+    },
+    "milestone_alerts": {
+      "enabled": true,
+      "notification_method": "dashboard_prominent + log",
+      "note": "See Milestone Alert & Decision System section for full spec"
+    }
   },
   "anthropic_model": "claude-sonnet-4-20250514",
   "strategies_enabled": [
@@ -246,17 +295,27 @@ monopoly-trader/
   "id": "lesson_012",
   "timestamp": "2026-02-18T14:45:00Z",
   "linked_trade": "txn_001",
+  "category": "correlated_market_move",
   "what_i_predicted": "2-4% rise over 2 hours",
   "what_actually_happened": "Rose 0.4% in 30min then reversed, ending 2hr window down 0.9%",
-  "why_i_was_wrong": "Overweighted delivery report sentiment. The positive news was already priced in by market open. Volume spike was actually profit-taking, not new buying conviction.",
-  "lesson": "For TSLA, positive earnings/delivery beats that are reported pre-market are usually priced in by 10:30 AM. Momentum signals after this point may be misleading. Check if the news is already reflected in the opening gap.",
-  "category": "sentiment_timing",
-  "confidence_adjustment": {
-    "sentiment": -0.08,
-    "momentum": -0.05
+  "initial_explanation": "Overweighted delivery report sentiment. The positive news was already priced in by market open.",
+  "skeptic_review": {
+    "simpler_explanation": "SPY dropped 1.2% during the same 2-hour window. TSLA's decline was consistent with broad market selloff, not TSLA-specific.",
+    "sample_size": 3,
+    "validated": false,
+    "regime_dependent": true,
+    "falsifiable_test": "If TSLA declines when SPY is flat after a pre-market delivery beat, this lesson holds. If TSLA declines only when SPY also declines, the lesson is about market correlation, not delivery report timing."
   },
+  "lesson": "Pre-market delivery beats may be priced in by 10:30 AM, but this instance was confounded by a broad market selloff. Need more data points where SPY is flat to isolate the delivery-beat effect.",
+  "confidence_adjustment": {
+    "sentiment": -0.04,
+    "momentum": -0.02
+  },
+  "weight": 1.0,
+  "decay_rate": 0.95,
   "times_validated": 0,
-  "times_contradicted": 0
+  "times_contradicted": 1,
+  "last_validated": null
 }
 ```
 
@@ -337,10 +396,17 @@ get_intraday(ticker: str, interval: str = "5m") -> pd.DataFrame
 
 calculate_indicators(df: pd.DataFrame) -> dict
 # Returns: {rsi_14, sma_20, sma_50, ema_12, ema_26, macd, macd_signal,
-#           bollinger_upper, bollinger_lower, atr, volume_sma_20, obv}
+#           bollinger_upper, bollinger_lower, atr_14, volume_sma_20, obv}
+# NOTE: atr_14 (Average True Range) is critical for volatility-adjusted stop losses
+
+get_macro_regime() -> dict:
+# Returns: {spy_daily_change, vix_level, regime: "normal"|"elevated"|"crisis",
+#           confidence_threshold_override: float or None}
+# This sits ABOVE all agents — if SPY is melting down or VIX is spiking,
+# all agents must require higher conviction to trade.
 
 get_market_summary(ticker: str) -> dict
-# Bundles current price + indicators + recent history into one payload
+# Bundles current price + indicators + macro regime into one payload
 ```
 
 ### 2. strategies.py — Strategy Engine
@@ -418,14 +484,89 @@ async def research_on_demand(ticker: str, topic: str) -> dict:
 
 **Output**: Each research task produces a structured report that gets stored in `knowledge/research/` and summarized into `knowledge/tsla_profile.json`.
 
-### 4. learner.py — Learning Engine (NEW)
+### 4. learner.py — Learning Engine with Skeptic Layer (NEW)
 
 **Responsibilities:**
 - Conduct post-trade reviews comparing predictions to outcomes
 - Extract lessons and update the knowledge base
+- **Challenge every lesson through a built-in Skeptic that demands structured, falsifiable categorization**
 - Adjust strategy confidence weights based on performance
 - Discover new patterns from trade history
+- Apply lesson decay — old lessons lose weight unless re-validated
 - Write journal entries reflecting on overall progress
+
+**CRITICAL: The Skeptic Layer**
+
+LLMs are excellent at inventing confident causal stories after the fact. "TSLA dropped because Elon tweeted about Mars" sounds wise but might be nonsense — maybe the whole market dropped. The Skeptic layer prevents narrative lock-in by forcing every lesson through structured categorization.
+
+**Lesson Categories (every lesson MUST be assigned one):**
+```python
+LESSON_CATEGORIES = {
+    "signal_correct": "The signal was right and the trade worked as predicted",
+    "signal_early": "Right direction but wrong timing — signal fired too soon",
+    "signal_late": "Right direction but entered too late — most of the move was over",
+    "signal_wrong": "The signal was simply incorrect — predicted direction was wrong",
+    "risk_sizing_error": "Direction was right but position size was wrong (too big/small)",
+    "regime_mismatch": "Signal would have worked in a different market regime",
+    "external_shock": "Unpredictable external event overwhelmed the signal",
+    "stop_loss_whipsaw": "Stop loss triggered but price recovered — stop was too tight",
+    "correlated_market_move": "TSLA moved with the broader market, not on its own signal",
+    "noise_trade": "There was no real signal — this was a low-conviction trade that shouldn't have been taken"
+}
+```
+
+**Skeptic Prompt (runs on every lesson before it's saved):**
+```
+You are the Skeptic. Your job is to challenge the lesson the agent just 
+extracted from a trade. Ask:
+
+1. SIMPLER EXPLANATION: Was there a simpler explanation? Did the whole 
+   market move the same direction? Was this just correlation with SPY?
+   Check SPY's movement during the same period.
+
+2. SAMPLE SIZE: How many times has this pattern occurred? If fewer than 
+   5 occurrences, label this lesson as "unvalidated" — it might be noise.
+
+3. SURVIVORSHIP: Is the agent only remembering the times this pattern 
+   worked and forgetting the times it didn't?
+
+4. REGIME DEPENDENCY: Would this lesson have worked 6 months ago? In a 
+   different rate environment? In a bear market?
+
+5. FALSIFIABILITY: What would DISPROVE this lesson? If nothing could 
+   disprove it, it's not a lesson — it's a belief.
+
+Categorize the lesson into exactly one of the structured categories.
+If the lesson doesn't survive scrutiny, downgrade it to "unvalidated" 
+and reduce its weight in the knowledge base.
+```
+
+**Model Version Tracking [v3 — Gemini r3 insight]:**
+Every stored lesson, prediction, and analysis must include the LLM model version that generated it. If you upgrade models (e.g., from Sonnet 4.5 to a future Opus 4.7), treat this as a regime change — trigger a review of the entire knowledge base. A knowledge base built on one model's reasoning patterns may be misinterpreted by a different model.
+
+```json
+{
+  "lesson_id": "lesson_042",
+  "model_version": "claude-sonnet-4-5-20250929",
+  "skeptic_model_version": "claude-haiku-4-5-20251001",
+  "generated_at": "2026-03-15T14:30:00Z"
+}
+```
+
+**Lesson Decay:**
+```python
+def apply_lesson_decay(lessons: list, decay_rate: float = 0.95) -> list:
+    """Lessons lose weight over time unless re-validated.
+    
+    - Each lesson has a 'weight' starting at 1.0
+    - Every week, weight *= decay_rate (default 0.95)
+    - If a lesson is re-validated by a new trade outcome, weight resets to 1.0
+    - Lessons with weight < 0.3 are archived (not deleted, but excluded 
+      from agent prompts)
+    - A lesson from 3 months ago in a different rate regime might be 
+      actively harmful today
+    """
+```
 
 **The Learning Loop:**
 
@@ -588,7 +729,9 @@ def get_performance_vs_benchmark() -> dict
 - Create JSON data files for the JS frontend
 
 **Dashboard Sections:**
-- 📈 **Portfolio Value Chart** — Line chart of total value over time vs TSLA buy-and-hold vs SPY
+- 📊 **"Am I Beating the Market?" (PRIMARY VIEW)** — Agent return vs all 4 benchmarks (Buy&Hold TSLA, SPY, DCA, Random median). This is the first thing you see. Includes verdict (outperforming/underperforming/inconclusive), alpha, agent percentile vs random traders, and statistical significance. See benchmarking-graduation-spec.md.
+- 🎓 **Graduation Progress** — Which of the 12 graduation criteria are met (green) vs unmet (red). Progress toward real money.
+- 📈 **Portfolio Value Chart** — Line chart of total value over time with all benchmark lines overlaid
 - 💰 **Current Position** — Holdings, cash, total value, P&L
 - 🧠 **Learning Progress** — Prediction accuracy over time (is the agent improving?)
 - 📊 **Strategy Evolution** — How strategy weights have shifted over time (area chart)
@@ -596,23 +739,36 @@ def get_performance_vs_benchmark() -> dict
 - 📋 **Trade Log** — Sortable table with hypothesis, outcome, and lesson for each trade
 - 📓 **Agent Journal** — The agent's own reflections on its progress
 - 🔬 **Knowledge Base Browser** — Lessons, patterns, research findings
-- ⚡ **Live Status** — Current price, last decision, next poll time
+- ⚡ **Live Status** — Current price, last decision, next poll time, system health
 
 ### 9. main.py — Orchestrator
 
-**The Decision Cycle (every 5 minutes during market hours):**
+**The Decision Cycle (every 15 minutes during market hours):**
 ```python
 def run_cycle():
-    1. Fetch market data + calculate indicators
-    2. Run strategy signals (weighted by evolved scores)
-    3. Check stop losses (auto-sell if triggered)
-    4. Query knowledge base for relevant context
-    5. Call agent for decision (with knowledge context)
-    6. If action != HOLD: execute trade, record hypothesis
-    7. Check pending predictions — score any whose horizon has passed
-    8. If a recent trade closed: run post-trade review → extract lesson
-    9. Update dashboard data
-    10. Log everything
+    1. Fetch market data + calculate indicators (including ATR)
+    2. Classify current regime (50-day SPY slope + VIX terciles)
+    3. Check macro gate (SPY, VIX) — apply elevated conviction thresholds if needed
+    4. Check earnings blackout — block new positions if within 48hrs of earnings
+    5. Check gap risk — reduce max position size before known events
+    6. Run strategy signals (weighted by evolved, regime-tagged scores)
+    7. Check stop losses using dynamic ATR levels (auto-sell if triggered)
+    8. Query knowledge base for relevant context (decay-weighted, regime-matched)
+    9. Check BSM conviction caps — if BSM conflicts with signal, cap position size
+    10. Call agent for decision (with knowledge context + macro regime)
+    11. If action == HOLD: log decision with counterfactual tracking
+    12. If action != HOLD: execute trade with slippage simulation (0.05% per side), record hypothesis
+    13. Size position inversely to stop distance (wider ATR stop = smaller position)
+    14. Check pending predictions — score any whose horizon has passed
+    15. Score any pending HOLD counterfactuals
+    16. If a recent trade closed: run post-trade review → Skeptic challenge (separate model) → extract lesson → regime-tag
+    17. Run counterfactual sampling on validated lessons periodically
+    18. Apply weekly lesson decay
+    19. Check kill switches (30-day accuracy trend, drawdown, style drift)
+    20. Write full decision trace (inputs, outputs, influence breakdown, regime tag)
+    21. Run anomaly detection on this cycle's trace
+    22. Update dashboard data + health status
+    23. Log everything (structured JSON)
 ```
 
 **The Research Cycle (daily, after market close):**
@@ -642,13 +798,15 @@ def bootstrap():
 
 ## Risk Management Rules
 
-1. **Max Position Size**: Never invest more than 90% of portfolio in a single stock
-2. **Max Single Trade**: No single trade larger than 25% of portfolio value
-3. **Stop Loss**: Auto-sell if position drops 5% below cost basis
+1. **Max Position Size**: Never invest more than 65% of portfolio in a single stock (TSLA is too volatile for 90%)
+2. **Max Single Trade**: No single trade larger than 20% of portfolio value
+3. **Volatility-Adjusted Stop Loss**: Use ATR (Average True Range) based stops instead of fixed percentage. Default: 2x ATR below entry price. Fixed 5% stops on TSLA cause whipsaw death — the stock can swing 5% intraday on a normal Tuesday and finish green.
 4. **Fractional Shares**: Enabled — allows meaningful positions even with small portfolio
-5. **Cash Reserve**: Always maintain at least 10% cash for opportunities
+5. **Cash Reserve**: Always maintain at least 15% cash for opportunities
 6. **Cool-down**: Minimum 15 minutes between trades on same ticker
 7. **Daily Loss Limit**: If portfolio drops 8% in a day, stop trading until next day
+8. **Earnings Blackout**: No new positions 48 hours before known TSLA earnings dates unless the agent is explicitly running an earnings strategy. Earnings volatility is a different beast.
+9. **Global Macro Gate**: Before any trade, check the macro regime. If SPY is down >2% on the day or VIX is above 30, require higher conviction thresholds (confidence > 0.80) for any BUY. A perfect TSLA setup fails if the whole market is melting down.
 
 ---
 
@@ -670,6 +828,14 @@ python-dateutil>=2.8.0
 
 Build and test in this order:
 
+### Phase 0 — Walk-Forward Backtest Sanity Check (BUILD THIS FIRST)
+1. Download 2022-2025 TSLA OHLCV data via yfinance
+2. Implement technical strategies against historical data (no LLM needed)
+3. Run 100 random trader simulations on same data
+4. Test dynamic ATR stops against real TSLA volatility including overnight gaps
+5. Compare strategy returns vs random and buy-and-hold
+6. **If no strategy beats random on historical data, STOP — the learning loop has nothing to learn from**
+
 ### Phase 1 — Foundation
 1. `config.json` — Set up configuration
 2. `market_data.py` — Get price data flowing and indicators calculating
@@ -677,10 +843,11 @@ Build and test in this order:
 4. `knowledge_base.py` — Read/write knowledge files (start with empty scaffolding)
 5. **Test**: Verify you can fetch TSLA data, calculate indicators, and execute a mock trade
 
-### Phase 2 — Intelligence
+### Phase 2 — Intelligence + Benchmarks
 6. `strategies.py` — Implement all 5 strategy signal generators with dynamic weighting
-7. `agent.py` — Wire up Claude API for decision-making with knowledge context
-8. **Test**: Feed real data through strategies → agent → mock trade. Verify hypothesis is recorded.
+7. `benchmarks.py` — Implement all 4 benchmarks (Buy&Hold TSLA, SPY, DCA, Random x100). This must be built early — benchmarks are the primary success metric, not an afterthought. See benchmarking-graduation-spec.md for full details.
+8. `agent.py` — Wire up Claude API for decision-making with knowledge context
+9. **Test**: Feed real data through strategies → agent → mock trade. Verify hypothesis is recorded. Verify benchmarks are tracking.
 
 ### Phase 3 — Learning (the heart of the project)
 9. `learner.py` — Post-trade review, lesson extraction, pattern discovery, strategy evolution
@@ -699,7 +866,14 @@ Build and test in this order:
 18. Include: portfolio chart, prediction accuracy trend, strategy evolution chart, trade log with lessons, journal viewer
 19. **Test**: Run for several days, verify dashboard tells the story of the agent's learning journey
 
-### Phase 6 — Polish & Maturation
+### Phase 6 — Observability (see observability-spec.md for full details)
+20. `observability.py` — Decision tracing, anomaly detection, health checks, influence tracking
+21. Add CLI debug commands: `--explain-trade`, `--influence-report`, `--alerts`, `--health`, `--debug-traces`
+22. Integrate anomaly checks into main decision cycle
+23. Add health status, alert display, and influence breakdown to dashboard
+24. **Test**: Make a bad trade intentionally, verify the anomaly detector catches it and the trace explains what happened
+
+### Phase 7 — Polish & Maturation
 20. Add benchmark comparison (buy-and-hold TSLA, SPY)
 21. Tune the learning loop — are lessons actually improving decisions?
 22. Add "what I'd do differently" retrospective analysis
@@ -734,17 +908,276 @@ open dashboard/index.html
 
 ## Success Metrics
 
-The agent's success is measured not just by P&L, but by **learning trajectory**:
+The agent's success is measured not just by P&L, but by **learning trajectory** and **benchmark outperformance**:
 
-1. **Prediction Accuracy Trend** — Is the agent getting better at predicting direction over time? Track 7-day rolling accuracy for 30min, 2hr, and 1-day predictions. Week 1 might be 50% (coin flip). If it's 60%+ by week 4, that's real learning.
+1. **Benchmark Outperformance** — Is the agent beating Buy&Hold TSLA, SPY, DCA, and random trading? This is the single most important metric. If the answer is no, nothing else matters. See benchmarking-graduation-spec.md for the full benchmark framework and graduation criteria.
 
-2. **Strategy Evolution** — Are strategy weights shifting in response to performance? Are the winning strategies getting more weight?
+2. **Agent vs. Random Percentile** — Does the agent rank above the 75th percentile among 100 simulated random traders with the same rules? This separates skill from luck.
 
-3. **Lesson Quality** — Are lessons specific and actionable, or vague? Good: "TSLA drops after Elon tweets about non-Tesla ventures during market hours." Bad: "Sometimes the stock goes down."
+3. **Prediction Accuracy Trend** — Is the agent getting better at predicting direction over time? Track 7-day rolling accuracy for 30min, 2hr, and 1-day predictions. Week 1 might be 50% (coin flip). If it's 60%+ by week 4, that's real learning.
 
-4. **Journal Insight** — Read the agent's journal entries. Is it developing a coherent mental model of TSLA's behavior?
+4. **Strategy Evolution** — Are strategy weights shifting in response to performance? Are the winning strategies getting more weight?
 
-5. **P&L vs Benchmark** — Is the portfolio outperforming simple buy-and-hold? (Don't expect this early — the learning has to accumulate first.)
+5. **Sharpe Ratio** — Risk-adjusted return must be > 0.5 annualized. High returns with wild volatility aren't skill.
+
+6. **Graduation Progress** — How many of the 12 graduation criteria are met? The goal is all 12 sustained over 30 days, which earns the agent a shot at real money (starting with just $100 at Stage 1).
+
+---
+
+## Milestone Alert & Decision System
+
+The agent must proactively notify the operator when it reaches significant thresholds — both good and bad. This is not buried in logs. Milestone alerts are **prominently displayed on the dashboard** with a distinct visual treatment and persist until acknowledged.
+
+### How Alerts Work
+
+The system checks milestone conditions after every daily close. When a milestone is hit, it:
+1. Generates a **Milestone Report** (HTML + JSON) with full context
+2. Displays it prominently on the dashboard (different from anomaly alerts — these are strategic, not operational)
+3. Logs it to `data/milestones.json`
+4. Includes a **recommended action** and the data supporting it
+
+### Positive Milestones (Things Are Working)
+
+```json
+{
+  "milestones_positive": [
+    {
+      "id": "BEAT_RANDOM_30D",
+      "name": "Beating Random Traders (30-day)",
+      "condition": "Agent above 60th percentile of random traders for 30 consecutive days",
+      "message": "🟢 Echo has outperformed 60% of random traders for a full month. The learning loop may be producing real signal. Consider expanding to 3-agent ensemble.",
+      "recommended_action": "Review agent journal and top lessons. If learning quality is high, add Alpha and Bravo agents."
+    },
+    {
+      "id": "BEAT_RANDOM_75TH",
+      "name": "75th Percentile Achieved",
+      "condition": "Agent above 75th percentile of random traders for 14 consecutive days",
+      "message": "🟢 Agent is in the top quartile vs. random. This is the graduation threshold for skill vs. luck.",
+      "recommended_action": "Begin tracking all 12 graduation criteria simultaneously."
+    },
+    {
+      "id": "BEAT_BUY_HOLD",
+      "name": "Beating Buy & Hold",
+      "condition": "Agent total return exceeds TSLA buy-and-hold for 30 consecutive days",
+      "message": "🟢 Agent is beating the simplest possible strategy. This is the core value proposition.",
+      "recommended_action": "Verify with statistical significance tests. If p < 0.05, prepare graduation evaluation."
+    },
+    {
+      "id": "PREDICTION_ACCURACY_60",
+      "name": "Prediction Accuracy Above 60%",
+      "condition": "2-hour directional prediction accuracy > 60% over 30-day rolling window",
+      "message": "🟢 Agent is predicting TSLA direction correctly 60%+ of the time. This is well above coin-flip and suggests real learning.",
+      "recommended_action": "Examine which lesson categories and regime conditions produce the highest accuracy."
+    },
+    {
+      "id": "STRATEGY_DIVERGENCE",
+      "name": "Strategy Weights Diverging",
+      "condition": "Largest strategy weight is 2x or more the smallest weight",
+      "message": "🟢 The learning loop is differentiating strategies. The agent is developing preferences based on experience.",
+      "recommended_action": "Review which strategies earned trust and verify with per-strategy win rates."
+    },
+    {
+      "id": "GRADUATION_READY",
+      "name": "All 12 Graduation Criteria Met",
+      "condition": "All 12 criteria pass simultaneously over 30-day window + regime diversity met",
+      "message": "🎓 GRADUATION CANDIDATE. The agent has met all criteria for real money. Generate full graduation report.",
+      "recommended_action": "Generate graduation report. Review carefully. If convinced, begin Stage 1 with $100 real money."
+    }
+  ]
+}
+```
+
+### Negative Milestones (Decision Points — Not Automatic Kills)
+
+**Important design choice**: Hitting a negative milestone does NOT automatically kill the project. It triggers a **structured decision point** where the system presents the data and the operator decides: retool, pause, or kill. This is because:
+- Models improve over time (Opus 4.7, 4.8 may be available)
+- Market regimes change (a bad 90 days might be followed by conditions where the agent thrives)
+- Some failures are fixable (bad prompt, wrong ATR multiplier) vs. fundamental (the approach doesn't work)
+
+```json
+{
+  "milestones_negative": [
+    {
+      "id": "PHASE_0_FAIL",
+      "name": "Phase 0 Backtest Failure",
+      "condition": "No technical strategy beats random traders on 2022-2025 historical data",
+      "severity": "critical",
+      "message": "🔴 PHASE 0 FAILED. No strategy shows edge on historical data. The learning loop has nothing to build on.",
+      "options": [
+        {"action": "kill", "reasoning": "If math can't find signal in 3 years of data, LLMs won't either."},
+        {"action": "retool", "reasoning": "Try different indicators, different timeframes, or a different stock entirely."},
+        {"action": "investigate", "reasoning": "Check if the backtest implementation has bugs before concluding no signal exists."}
+      ]
+    },
+    {
+      "id": "RANDOM_LEVEL_60D",
+      "name": "No Better Than Random After 60 Days",
+      "condition": "Agent below 55th percentile of random traders after 60 trading days",
+      "severity": "high",
+      "message": "🟡 After 60 days, the agent is statistically indistinguishable from random trading. The learning loop is not producing edge.",
+      "options": [
+        {"action": "continue_30_more", "reasoning": "Learning may need more time to compound. Extend to 90 days before deciding."},
+        {"action": "retool", "reasoning": "Review lessons and skeptic rejections. Is the agent learning anything real? Try different model, different prompts, or different strategy weights."},
+        {"action": "upgrade_model", "reasoning": "A newer, more capable model may extract signal that the current model cannot. Check if a model upgrade is available."},
+        {"action": "kill", "reasoning": "If 60 days of trading + hundreds of lessons hasn't produced any edge, the approach may be fundamentally limited."}
+      ]
+    },
+    {
+      "id": "STATIC_BEATS_LEARNER",
+      "name": "Static Agent Outperforming Learning Agent",
+      "condition": "Alpha (no learning) outperforms Echo (with learning) for 30 consecutive days",
+      "severity": "high",
+      "message": "🟡 The static technical agent is beating the learning agent. The LLM learning loop may be adding noise, not wisdom.",
+      "options": [
+        {"action": "investigate", "reasoning": "Check if Echo's learned lessons are actually hurting performance. Review skeptic rejection rate — is it too lenient?"},
+        {"action": "retool_skeptic", "reasoning": "Tighten the skeptic layer. Increase minimum sample size for validated lessons. Add more aggressive counterfactual testing."},
+        {"action": "upgrade_model", "reasoning": "The learning quality depends on the model's reasoning ability. A more capable model may learn better."},
+        {"action": "accept", "reasoning": "Maybe simple technical trading IS better for TSLA and the learning loop is over-engineering. Pivot to Alpha as primary agent."}
+      ]
+    },
+    {
+      "id": "ACCURACY_DECLINING",
+      "name": "Prediction Accuracy Trending Down",
+      "condition": "30-day rolling prediction accuracy has declined for 30 consecutive days",
+      "severity": "high",
+      "message": "🟡 The agent is getting WORSE at predicting, not better. The knowledge base may be accumulating bad lessons.",
+      "options": [
+        {"action": "purge_lessons", "reasoning": "Wipe lessons with weight < 0.5 and unvalidated lessons. Let the agent learn fresh."},
+        {"action": "regime_check", "reasoning": "Has the market regime changed? Old lessons may be poisoning new decisions."},
+        {"action": "model_upgrade", "reasoning": "Try a newer model version. Reasoning improvements could fix declining accuracy."},
+        {"action": "pause_30_days", "reasoning": "Stop trading, let lessons decay, then restart with a cleaner knowledge base."}
+      ]
+    },
+    {
+      "id": "DRAWDOWN_LIMIT",
+      "name": "Portfolio Drawdown Limit Hit",
+      "condition": "Portfolio drops 15%+ from peak value",
+      "severity": "critical",
+      "message": "🔴 Maximum drawdown exceeded. Trading auto-halted.",
+      "auto_action": "halt_trading",
+      "options": [
+        {"action": "regress_stage", "reasoning": "Drop back one stage. If at Stage 0, continue paper trading with tighter risk rules."},
+        {"action": "investigate", "reasoning": "Was this a single bad event or systematic failure? Check if stop losses and macro gate were working."},
+        {"action": "retool_risk", "reasoning": "Tighten ATR multipliers, reduce max position, increase cash reserve."}
+      ]
+    },
+    {
+      "id": "REGIME_COLLAPSE",
+      "name": "Performance Collapses on Regime Change",
+      "condition": "Win rate drops 30+ percentage points when market regime changes",
+      "severity": "high",
+      "message": "🟡 Agent's performance collapsed with the regime change. Lessons learned in the previous regime are not transferring.",
+      "options": [
+        {"action": "force_regime_review", "reasoning": "Make the agent re-read all regime-tagged lessons from similar past regimes."},
+        {"action": "increase_decay", "reasoning": "Accelerate lesson decay rate to flush out regime-specific lessons faster."},
+        {"action": "wait", "reasoning": "The agent may need 2-3 weeks to adapt to the new regime. Monitor but don't panic."}
+      ]
+    },
+    {
+      "id": "STAGNANT_WEIGHTS",
+      "name": "Strategy Weights Never Diverge",
+      "condition": "After 60 days, no strategy weight has moved more than 5% from its starting value",
+      "severity": "medium",
+      "message": "🟡 The learning loop isn't differentiating strategies. Weights are essentially unchanged from day one.",
+      "options": [
+        {"action": "investigate", "reasoning": "Is the weight adjustment mechanism too conservative? Are lessons too evenly distributed?"},
+        {"action": "retool", "reasoning": "Increase weight adjustment sensitivity or change the weight update formula."},
+        {"action": "accept", "reasoning": "Maybe equal weighting IS optimal for TSLA. Not all markets reward specialization."}
+      ]
+    }
+  ]
+}
+```
+
+### The Retool vs. Kill Framework
+
+When a negative milestone is hit, the system generates a **Decision Point Report** that includes:
+
+1. **What happened** — the milestone data
+2. **Context** — current regime, recent model updates, known market events
+3. **Agent's own analysis** — what the agent thinks went wrong (take with skepticism)
+4. **Skeptic's analysis** — the separate model's assessment
+5. **Options with tradeoffs** — as shown above
+6. **Model landscape check** — are newer/better models available that might change the outcome?
+7. **Cost-to-date** — how much has been spent, what has been learned
+8. **Research value assessment** — even if the trading fails, is the experiment producing publishable insights?
+
+**Kill criteria (hard stops — these are genuine "the approach doesn't work" signals):**
+- Phase 0 backtest failure AND retool attempt also fails → the stock doesn't have tradeable patterns
+- After 120+ trading days across multiple regimes AND model upgrades attempted: still below 60th percentile of random → fundamental limitation
+- Monthly API cost > 50% of best-case monthly portfolio return for 3 consecutive months at current stage → economics don't work
+
+**Retool triggers (fixable problems):**
+- Model upgrade available → re-run with better model before killing
+- Skeptic too lenient/strict → adjust thresholds
+- Specific lesson categories dominating failures → adjust the learning loop
+- Risk rules causing position sizes too small → loosen one layer at a time
+
+**The Model Upgrade Consideration:**
+You're right that Opus 4.7, 4.8, or 4.9 may be available within the experiment's timeframe. The system should:
+- Track which model version is running
+- When a new model is released, flag it as an available upgrade
+- If the agent is underperforming, "upgrade model" should always be an option before "kill"
+- After a model upgrade, treat the first 14 days as a recalibration period (don't judge performance)
+- Include model version in the milestone report so you can see: "This result was with Sonnet 4.5. Opus 4.7 is now available."
+
+### Milestone Check Implementation
+
+```python
+class MilestoneChecker:
+    """Runs after market close daily. Checks all positive and negative milestones."""
+    
+    def check_all(self, metrics: dict, history: dict) -> list[dict]:
+        """Returns list of newly triggered milestones."""
+        triggered = []
+        for milestone in ALL_MILESTONES:
+            if self.evaluate_condition(milestone, metrics, history):
+                if not self.already_triggered(milestone):
+                    triggered.append(self.generate_milestone_report(milestone, metrics))
+        return triggered
+    
+    def generate_milestone_report(self, milestone: dict, metrics: dict) -> dict:
+        """Generate a full Decision Point Report for negative milestones
+        or a Celebration Report for positive ones."""
+        report = {
+            "milestone_id": milestone["id"],
+            "triggered_at": datetime.utcnow().isoformat(),
+            "severity": milestone.get("severity", "info"),
+            "message": milestone["message"],
+            "current_metrics": metrics,
+            "model_version": current_model_version,
+            "newer_model_available": check_for_model_upgrades(),
+            "cost_to_date": calculate_total_spend(),
+            "days_running": calculate_trading_days(),
+            "regime_history": get_regime_history(),
+        }
+        if milestone["severity"] in ["high", "critical"]:
+            report["options"] = milestone["options"]
+            report["auto_action"] = milestone.get("auto_action", None)
+        return report
+    
+    def display_on_dashboard(self, milestone_report: dict):
+        """Show prominently on dashboard. Positive milestones get a green banner.
+        Negative milestones get a yellow/red banner with action buttons."""
+```
+
+---
+
+## Integration: Billionaire Signal Monitor (BSM)
+
+MonopolyTrader receives external intelligence from the companion Billionaire Signal Monitor project. BSM tracks podcast appearances, interviews, tweets, and SEC filings from influential financial figures (Elon Musk, Cathie Wood, Ray Dalio, etc.) and writes structured trading signals to `data/bsm_signals/`.
+
+**Reading BSM signals**: During each decision cycle, `market_data.py` or `researcher.py` should check for fresh BSM signals:
+```python
+def get_bsm_signals(signal_path: str = "data/bsm_signals/latest_signals.json") -> list[dict]:
+    """Read latest BSM signals. Filter expired. Return relevant signals."""
+```
+
+**Signal format**: Each BSM signal includes `source_person`, `ticker`, `direction` (bullish/bearish/caution), `strength` (0-1), `confidence` (0-1), `summary`, `time_horizon`, and `decay` info.
+
+**How the agent should use BSM signals**: BSM signals feed into the agent prompt alongside strategy signals and market data. The agent should weigh them based on the source person's prediction track record (included in the signal) and how recently the signal was generated.
+
+BSM is a separate project with its own CLAUDE.md. It runs independently and writes to the shared `data/bsm_signals/` directory. MonopolyTrader only reads from this directory — it never writes to it.
 
 ---
 

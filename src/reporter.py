@@ -73,6 +73,65 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Prediction scoreboard
     scoreboard = _build_scoreboard(predictions)
 
+    # Benchmarks comparison + graduation
+    benchmarks_comparison = {}
+    graduation_criteria = {}
+    verdict = "too_early"
+    try:
+        from .benchmarks import BenchmarkTracker
+        bt = BenchmarkTracker()
+        benchmarks_comparison = bt.get_comparison(summary["total_value"])
+
+        # Build agent metrics for graduation check
+        agent_metrics = {
+            "trading_days": len(snapshots),
+            "total_trades": summary.get("total_trades", 0),
+            "percentile_vs_random": benchmarks_comparison.get("percentile_vs_random", 0),
+            "sharpe_ratio": 0,  # TODO: calculate from snapshots
+            "max_drawdown_pct": 0,  # TODO: calculate from snapshots
+            "prediction_accuracy_pct": 0,
+            "beats_buy_hold_tsla": benchmarks_comparison.get("beats_buy_hold_tsla", False),
+            "beats_buy_hold_spy": benchmarks_comparison.get("beats_buy_hold_spy", False),
+            "beats_dca": benchmarks_comparison.get("beats_dca", False),
+            "beats_random_median": benchmarks_comparison.get("beats_random_median", False),
+            "regime_count": 0,
+            "total_return_pct": summary.get("total_pnl_pct", 0),
+        }
+        # Prediction accuracy
+        if accuracy.get("direction_accuracy"):
+            accs = [v["accuracy_pct"] for v in accuracy["direction_accuracy"].values()]
+            agent_metrics["prediction_accuracy_pct"] = sum(accs) / len(accs) if accs else 0
+
+        graduation_result = bt.check_graduation_criteria(agent_metrics)
+        graduation_criteria = graduation_result
+        verdict = bt.calculate_verdict(benchmarks_comparison, graduation_result)
+    except Exception as e:
+        logger.warning(f"Benchmark comparison failed: {e}")
+
+    # Health & alerts
+    health = {}
+    active_alerts = []
+    try:
+        from .observability import HealthChecker
+        health = HealthChecker().check()
+    except Exception:
+        pass
+    try:
+        alerts_data = load_json(DATA_DIR.parent / "logs" / "alerts.json", default=[])
+        active_alerts = [a for a in alerts_data if a.get("status") == "active"]
+    except Exception:
+        pass
+
+    # Milestones
+    milestones = load_json(DATA_DIR / "milestones.json", default=[])
+
+    # Hold log summary
+    hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
+    hold_summary = {
+        "total_holds": len(hold_log),
+        "recent": hold_log[-5:] if hold_log else [],
+    }
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -81,6 +140,13 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "transactions": transactions,
         "snapshots": snapshots,
         "benchmark": benchmark,
+        "benchmarks_comparison": benchmarks_comparison,
+        "graduation_criteria": graduation_criteria,
+        "verdict": verdict,
+        "health": health,
+        "active_alerts": active_alerts,
+        "milestones": milestones,
+        "hold_log_summary": hold_summary,
         "lessons": lessons,
         "patterns": patterns,
         "predictions": scoreboard,

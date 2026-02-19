@@ -1,4 +1,4 @@
-"""Learning engine — post-trade reviews, lesson extraction, pattern discovery, strategy evolution."""
+"""Learning engine — post-trade reviews, skeptic layer, lesson decay, pattern discovery."""
 
 import json
 import os
@@ -13,6 +13,16 @@ from .knowledge_base import (
 from .portfolio import load_transactions, save_transactions
 
 logger = setup_logging("learner")
+
+# Skeptic uses a cheap model separate from the trading model
+SKEPTIC_MODEL = "claude-haiku-4-5-20251001"
+
+# v3 structured lesson categories
+LESSON_CATEGORIES = [
+    "signal_correct", "signal_early", "signal_late", "signal_wrong",
+    "risk_sizing_error", "regime_mismatch", "external_shock",
+    "stop_loss_whipsaw", "correlated_market_move", "noise_trade",
+]
 
 
 def _get_client() -> Anthropic:
@@ -30,16 +40,18 @@ def _get_client() -> Anthropic:
     return Anthropic(api_key=api_key)
 
 
-def _call_claude(system: str, user: str, max_tokens: int = 1500) -> str:
+def _call_claude(system: str, user: str, max_tokens: int = 1500) -> tuple[str, str]:
+    """Call Claude and return (response_text, model_version)."""
     config = load_config()
     client = _get_client()
+    model = config["anthropic_model"]
     response = client.messages.create(
-        model=config["anthropic_model"],
+        model=model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return response.content[0].text.strip()
+    return response.content[0].text.strip(), model
 
 
 def _parse_json(raw: str) -> dict | list:
@@ -59,29 +71,102 @@ REVIEW_SYSTEM = """You are the learning module of MonopolyTrader, an AI trading 
 
 Be brutally honest. If the trade was based on flawed reasoning, say so. If it was good reasoning but bad luck, distinguish that. The goal is to build a knowledge base that makes the agent smarter over time.
 
+IMPORTANT: Categorize every lesson into EXACTLY ONE of these categories:
+- signal_correct: signal was right and trade worked as predicted
+- signal_early: right direction but wrong timing — signal fired too soon
+- signal_late: right direction but entered too late
+- signal_wrong: signal was simply incorrect
+- risk_sizing_error: direction was right but position size was wrong
+- regime_mismatch: signal would have worked in a different market regime
+- external_shock: unpredictable external event overwhelmed the signal
+- stop_loss_whipsaw: stop triggered but price recovered
+- correlated_market_move: TSLA moved with broader market, not on its own signal
+- noise_trade: no real signal — low-conviction trade that shouldn't have been taken
+
 Respond with JSON:
 {
   "what_i_predicted": "<summary of the hypothesis>",
   "what_actually_happened": "<what the price actually did>",
   "was_correct": <true/false>,
-  "why_right_or_wrong": "<specific analysis of why the prediction was right or wrong>",
-  "lesson": "<one clear, actionable lesson for future trades>",
-  "category": "<one of: timing, momentum, mean_reversion, sentiment_timing, volatility, risk_management, pattern_recognition, market_regime, other>",
+  "why_right_or_wrong": "<specific analysis>",
+  "lesson": "<one clear, actionable lesson>",
+  "category": "<exactly one of the 10 categories above>",
   "confidence_adjustment": {
     "<strategy_name>": <float adjustment, e.g. -0.05 or +0.03>
   }
 }"""
 
 
+SKEPTIC_SYSTEM = """You are the Skeptic. Your job is to challenge a lesson the trading agent extracted from a trade. You receive ONLY raw data — no agent narrative.
+
+Ask these questions:
+1. SIMPLER EXPLANATION: Did the whole market move the same direction? Check SPY movement.
+2. SAMPLE SIZE: How many times has this pattern occurred? If < 5, label "unvalidated".
+3. REGIME DEPENDENCY: Would this lesson work in a different rate/volatility environment?
+4. FALSIFIABILITY: What would DISPROVE this lesson?
+
+Respond with JSON:
+{
+  "simpler_explanation": "<alternative explanation if one exists>",
+  "sample_size": <estimated occurrences>,
+  "validated": <true/false — does the lesson survive scrutiny?>,
+  "regime_dependent": <true/false>,
+  "falsifiable_test": "<what would disprove this lesson>"
+}"""
+
+
+def _apply_hard_rejections(lesson_category: str, spy_change: float = 0) -> tuple[bool, str]:
+    """Auto-reject lessons without LLM when clear confounds exist."""
+    if lesson_category == "correlated_market_move" and abs(spy_change) < 0.003:
+        return True, "Rejected: labeled correlated_market_move but SPY moved < 0.3%"
+    return False, ""
+
+
+async def skeptic_challenge(lesson: dict, trade: dict, spy_change: float = 0) -> dict:
+    """Run skeptic model on a lesson — separate model, raw data only."""
+    config = load_config()
+
+    user_prompt = f"""Challenge this lesson from a trading agent:
+
+Trade: {trade['action']} {trade['shares']:.4f} TSLA @ ${trade['price']:.2f}
+Category: {lesson.get('category', 'unknown')}
+Lesson: {lesson.get('lesson', '')}
+What predicted: {lesson.get('what_i_predicted', '')}
+What happened: {lesson.get('what_actually_happened', '')}
+
+Raw data:
+- SPY movement during same period: {spy_change*100:.2f}%
+- Trade P&L: ${trade.get('realized_pnl', 'still open')}
+
+Challenge this lesson. Is there a simpler explanation?"""
+
+    try:
+        client = _get_client()
+        response = client.messages.create(
+            model=SKEPTIC_MODEL,
+            max_tokens=800,
+            system=SKEPTIC_SYSTEM,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = response.content[0].text.strip()
+        review = _parse_json(raw)
+        review["skeptic_model_version"] = SKEPTIC_MODEL
+        return review
+    except Exception as e:
+        logger.warning(f"Skeptic challenge failed: {e}")
+        return {"validated": True, "simpler_explanation": "Skeptic unavailable", "skeptic_model_version": SKEPTIC_MODEL}
+
+
 async def review_trade(trade: dict, current_price: float) -> dict | None:
     """Review a completed trade by comparing hypothesis to outcome.
 
-    Called after a sell, or periodically to check buy hypothesis accuracy.
+    v3: includes skeptic challenge, regime tagging, model version tracking.
     """
     if not trade.get("hypothesis"):
         logger.info(f"Skipping review for {trade['id']} — no hypothesis")
         return None
 
+    config = load_config()
     price_change = current_price - trade["price"]
     price_change_pct = (price_change / trade["price"]) * 100
 
@@ -103,24 +188,68 @@ Outcome:
 What went right or wrong? What should the agent learn?"""
 
     try:
-        raw = _call_claude(REVIEW_SYSTEM, user_prompt)
+        raw, model_ver = _call_claude(REVIEW_SYSTEM, user_prompt)
         review = _parse_json(raw)
 
-        # Build lesson record
+        # Enforce valid category
+        category = review.get("category", "noise_trade")
+        if category not in LESSON_CATEGORIES:
+            category = "noise_trade"
+
+        # Build lesson record with v3 fields
         lesson = {
             "linked_trade": trade["id"],
             "what_i_predicted": review.get("what_i_predicted", ""),
             "what_actually_happened": review.get("what_actually_happened", ""),
             "why_i_was_wrong": review.get("why_right_or_wrong", ""),
             "lesson": review.get("lesson", ""),
-            "category": review.get("category", "other"),
+            "category": category,
             "confidence_adjustment": review.get("confidence_adjustment", {}),
+            "weight": 1.0,
+            "decay_rate": 0.95,
             "times_validated": 0,
             "times_contradicted": 0,
+            "model_version": model_ver,
         }
+
+        # Get SPY movement for skeptic
+        spy_change = 0
+        try:
+            from .market_data import get_macro_data
+            macro = get_macro_data()
+            spy_change = macro.get("spy_change_pct", 0)
+        except Exception:
+            pass
+
+        # Hard rejection check
+        rejected, reason = _apply_hard_rejections(category, spy_change)
+        if rejected:
+            lesson["skeptic_review"] = {"validated": False, "reason": reason}
+            lesson["weight"] = 0.3
+            logger.info(f"Hard rejection: {reason}")
+        else:
+            # Run skeptic challenge
+            skeptic = await skeptic_challenge(lesson, trade, spy_change)
+            lesson["skeptic_review"] = skeptic
+            if not skeptic.get("validated", True):
+                lesson["weight"] = 0.5  # Downweight unvalidated lessons
+                logger.info(f"Skeptic downweighted lesson: {skeptic.get('simpler_explanation', '')[:80]}")
+
+        # Add regime tag
+        try:
+            from .market_data import classify_regime
+            regime = classify_regime()
+            lesson["regime"] = {
+                "trend": regime.get("trend", "unknown"),
+                "volatility": regime.get("volatility", "unknown"),
+                "vix": regime.get("vix", 0),
+            }
+        except Exception:
+            lesson["regime"] = {"trend": "unknown", "volatility": "unknown", "vix": 0}
+
         saved_lesson = add_lesson(lesson)
 
-        # Mark the trade as reviewed
+        # Mark trade as reviewed
         transactions = load_transactions()
         for t in transactions:
             if t["id"] == trade["id"]:
@@ -132,12 +261,15 @@ What went right or wrong? What should the agent learn?"""
                 break
         save_transactions(transactions)
 
-        # Apply confidence adjustments to strategy scores
+        # Apply confidence adjustments
         adjustments = review.get("confidence_adjustment", {})
         if adjustments:
             _apply_confidence_adjustments(adjustments, trade)
 
-        logger.info(f"Reviewed trade {trade['id']}: lesson={saved_lesson['id']}, correct={review.get('was_correct')}")
+        logger.info(
+            f"Reviewed trade {trade['id']}: lesson={saved_lesson['id']}, "
+            f"correct={review.get('was_correct')}, weight={lesson['weight']}"
+        )
         return saved_lesson
 
     except Exception as e:
@@ -305,7 +437,7 @@ PREDICTION ACCURACY:
 Find recurring patterns. Be specific — cite trade IDs and lessons as evidence."""
 
     try:
-        raw = _call_claude(PATTERN_SYSTEM, user_prompt, max_tokens=2000)
+        raw, model_ver = _call_claude(PATTERN_SYSTEM, user_prompt, max_tokens=2000)
         patterns = _parse_json(raw)
 
         saved = []
@@ -318,6 +450,7 @@ Find recurring patterns. Be specific — cite trade IDs and lessons as evidence.
                 continue
             p["sample_size"] = len(transactions)
             p["last_tested"] = iso_now()
+            p["model_version"] = model_ver
             saved_pattern = add_pattern(p)
             saved.append(saved_pattern)
 
@@ -450,8 +583,8 @@ Strategy weights: {json.dumps({k: f"{v['weight']:.2f} ({v['trend']})" for k, v i
 Reflect on your performance. What's working? What's not? What will you try next?"""
 
     try:
-        entry = _call_claude(JOURNAL_SYSTEM, user_prompt, max_tokens=1000)
-        append_journal(entry)
+        entry, model_ver = _call_claude(JOURNAL_SYSTEM, user_prompt, max_tokens=1000)
+        append_journal(f"[Model: {model_ver}]\n\n{entry}")
         logger.info("Journal entry written")
         return entry
     except Exception as e:

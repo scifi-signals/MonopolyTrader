@@ -222,19 +222,60 @@ def append_journal(entry: str):
 
 # --- Knowledge Retrieval ---
 
+def apply_lesson_decay(decay_rate: float = 0.95) -> int:
+    """Apply weekly decay to all lessons. Archive if weight < 0.3.
+
+    Returns number of lessons archived.
+    """
+    lessons = get_lessons()
+    archived = 0
+    for lesson in lessons:
+        weight = lesson.get("weight", 1.0)
+        new_weight = round(weight * decay_rate, 4)
+        lesson["weight"] = new_weight
+        if new_weight < 0.3 and not lesson.get("archived"):
+            lesson["archived"] = True
+            archived += 1
+
+    save_json(LESSONS_PATH, lessons)
+    if archived > 0:
+        logger.info(f"Lesson decay: {archived} lessons archived (weight < 0.3)")
+    return archived
+
+
 def get_relevant_knowledge(market_context: dict = None) -> dict:
     """Retrieve knowledge relevant to current trading decisions.
 
-    Returns a condensed bundle for the agent prompt.
+    v3: filters by regime match and sorts by decay-weighted relevance.
     """
     lessons = get_lessons()
     patterns = get_patterns()
     scores = get_strategy_scores()
     profile = get_tsla_profile()
 
-    # For now, return the most recent lessons and all patterns.
-    # Phase 3 will add smarter relevance filtering.
-    recent_lessons = lessons[-10:] if lessons else []
+    # Filter out archived lessons
+    active_lessons = [l for l in lessons if not l.get("archived")]
+
+    # Sort by weight (decay-adjusted), most relevant first
+    active_lessons.sort(key=lambda l: l.get("weight", 1.0), reverse=True)
+
+    # If regime info available, boost lessons matching current regime
+    current_regime = None
+    if market_context and "regime" in market_context:
+        current_regime = market_context["regime"]
+
+    if current_regime:
+        def regime_score(lesson):
+            lr = lesson.get("regime", {})
+            score = lesson.get("weight", 1.0)
+            if lr.get("trend") == current_regime.get("trend"):
+                score *= 1.5
+            if lr.get("volatility") == current_regime.get("volatility"):
+                score *= 1.3
+            return score
+        active_lessons.sort(key=regime_score, reverse=True)
+
+    recent_lessons = active_lessons[:10]
     active_patterns = [p for p in patterns if p.get("reliability", 0) > 0.3]
 
     return {

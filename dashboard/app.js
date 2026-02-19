@@ -1,4 +1,4 @@
-// MonopolyTrader Dashboard
+// MonopolyTrader v3 Dashboard
 
 let DATA = null;
 let charts = {};
@@ -42,8 +42,12 @@ function render() {
 
     renderHeader();
     renderStatusBanner();
-    renderKPIs();
+    renderMilestones();
+    renderBenchmarkComparison();
+    renderGraduationChecklist();
     renderPortfolioChart();
+    renderHealthStatus();
+    renderKPIs();
     renderStrategyBars();
     renderWeightChart();
     renderPredictions();
@@ -75,7 +79,7 @@ function renderStatusBanner() {
     if (isStale) {
         cls = 'stale';
         label = 'MARKET OPEN — DATA STALE';
-        detail = `Last update ${ageMin}m ago — data may be outdated`;
+        detail = `Last update ${ageMin}m ago`;
     } else if (isOpen) {
         cls = 'market-open';
         label = 'MARKET OPEN';
@@ -92,6 +96,246 @@ function renderStatusBanner() {
         <span class="status-text">${label}</span>
         <span class="status-time">${detail}</span>
     `;
+}
+
+// --- NEW: Benchmark Comparison ---
+
+function renderBenchmarkComparison() {
+    const comp = DATA.benchmarks_comparison || {};
+    const verdict = DATA.verdict || 'too_early';
+    const container = document.getElementById('benchmark-bars');
+    const verdictEl = document.getElementById('verdict-badge');
+    const detailEl = document.getElementById('benchmark-detail');
+
+    if (!comp.agent) {
+        container.innerHTML = '<p style="color:var(--text2)">Benchmarks will appear after the first trading day.</p>';
+        verdictEl.innerHTML = '';
+        detailEl.innerHTML = '';
+        return;
+    }
+
+    const verdictConfig = {
+        'too_early': { label: 'TOO EARLY', cls: 'verdict-neutral', desc: 'Not enough data to judge performance' },
+        'underperforming': { label: 'UNDERPERFORMING', cls: 'verdict-bad', desc: 'Agent is behind benchmarks' },
+        'inconclusive': { label: 'INCONCLUSIVE', cls: 'verdict-neutral', desc: 'Mixed results across benchmarks' },
+        'promising': { label: 'PROMISING', cls: 'verdict-ok', desc: 'Showing signs of edge' },
+        'outperforming': { label: 'OUTPERFORMING', cls: 'verdict-good', desc: 'Beating key benchmarks' },
+        'graduating': { label: 'GRADUATION READY', cls: 'verdict-great', desc: 'All criteria met!' },
+    };
+
+    const vc = verdictConfig[verdict] || verdictConfig['too_early'];
+    verdictEl.innerHTML = `<span class="verdict-label ${vc.cls}">${vc.label}</span> <span class="verdict-desc">${vc.desc}</span>`;
+
+    const benchmarks = [
+        { name: 'Agent', value: comp.agent?.return_pct || 0, color: '#6366f1', highlight: true },
+        { name: 'Buy & Hold TSLA', value: comp.buy_hold_tsla?.return_pct || 0, color: '#f59e0b' },
+        { name: 'Buy & Hold SPY', value: comp.buy_hold_spy?.return_pct || 0, color: '#3b82f6' },
+        { name: 'DCA TSLA', value: comp.dca_tsla?.return_pct || 0, color: '#22c55e' },
+        { name: 'Random Median', value: comp.random_median?.return_pct || 0, color: '#8b90a5' },
+    ];
+
+    const maxAbs = Math.max(...benchmarks.map(b => Math.abs(b.value)), 1);
+
+    container.innerHTML = benchmarks.map(b => {
+        const width = Math.max(Math.abs(b.value) / maxAbs * 80, 3);
+        const isPos = b.value >= 0;
+        const barCls = isPos ? 'bar-positive' : 'bar-negative';
+        const highlight = b.highlight ? 'bar-highlight' : '';
+        return `
+            <div class="benchmark-row ${highlight}">
+                <span class="bench-name">${b.name}</span>
+                <div class="bench-bar-track">
+                    <div class="bench-bar ${barCls}" style="width:${width}%;background:${b.color}">${fmtPct(b.value)}</div>
+                </div>
+            </div>`;
+    }).join('');
+
+    const pctile = comp.percentile_vs_random || 0;
+    detailEl.innerHTML = `
+        <span>vs Random: <strong>${pctile.toFixed(0)}th percentile</strong></span>
+        <span>Alpha vs TSLA: <strong class="${pnlClass(comp.alpha_vs_tsla)}">${fmtPct(comp.alpha_vs_tsla || 0)}</strong></span>
+        <span>Alpha vs SPY: <strong class="${pnlClass(comp.alpha_vs_spy)}">${fmtPct(comp.alpha_vs_spy || 0)}</strong></span>
+    `;
+}
+
+// --- NEW: Graduation Checklist ---
+
+function renderGraduationChecklist() {
+    const grad = DATA.graduation_criteria || {};
+    const criteria = grad.criteria || {};
+    const container = document.getElementById('graduation-grid');
+
+    if (Object.keys(criteria).length === 0) {
+        container.innerHTML = '<p style="color:var(--text2)">Graduation criteria will be tracked after benchmarks are initialized.</p>';
+        return;
+    }
+
+    const labels = {
+        min_trading_days: 'Trading Days',
+        min_trades: 'Total Trades',
+        percentile_vs_random: 'vs Random Pctile',
+        sharpe_ratio: 'Sharpe Ratio',
+        max_drawdown: 'Max Drawdown',
+        prediction_accuracy: 'Prediction Accuracy',
+        beats_buy_hold_tsla: 'Beat B&H TSLA',
+        beats_buy_hold_spy: 'Beat B&H SPY',
+        beats_dca: 'Beat DCA',
+        beats_random_median: 'Beat Random',
+        regime_diversity: 'Regime Diversity',
+        positive_return: 'Positive Return',
+    };
+
+    container.innerHTML = Object.entries(criteria).map(([key, c]) => {
+        const icon = c.passed ? 'check-icon' : 'x-icon';
+        const cls = c.passed ? 'grad-pass' : 'grad-fail';
+        const label = labels[key] || key;
+        const actual = typeof c.actual === 'boolean' ? (c.actual ? 'Yes' : 'No') : c.actual;
+        const required = typeof c.required === 'boolean' ? 'Yes' : c.required;
+        return `
+            <div class="grad-item ${cls}">
+                <div class="${icon}"></div>
+                <div class="grad-label">${label}</div>
+                <div class="grad-value">${actual} / ${required}</div>
+            </div>`;
+    }).join('');
+
+    const passed = grad.passed || 0;
+    const total = grad.total || 12;
+    container.innerHTML += `<div class="grad-summary">${passed}/${total} criteria met</div>`;
+}
+
+// --- NEW: Health Status ---
+
+function renderHealthStatus() {
+    const health = DATA.health || {};
+    const alerts = DATA.active_alerts || [];
+    const container = document.getElementById('health-strip');
+
+    if (!health.components && alerts.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'flex';
+
+    let html = '';
+
+    // Health dots
+    if (health.components) {
+        html += '<div class="health-dots">';
+        for (const [name, status] of Object.entries(health.components)) {
+            const dotCls = status.healthy ? 'dot-healthy' : 'dot-unhealthy';
+            html += `<span class="health-dot ${dotCls}" title="${name}: ${status.detail}">${name.replace('_', ' ')}</span>`;
+        }
+        html += '</div>';
+    }
+
+    // Active alerts
+    if (alerts.length > 0) {
+        html += '<div class="alert-strip">';
+        for (const a of alerts.slice(0, 3)) {
+            const sevCls = a.severity === 'CRITICAL' ? 'alert-critical' : 'alert-warning';
+            html += `<span class="alert-badge ${sevCls}">${a.type}: ${a.message}</span>`;
+        }
+        html += '</div>';
+    }
+
+    container.innerHTML = html;
+}
+
+// --- NEW: Milestones ---
+
+function renderMilestones() {
+    const milestones = DATA.milestones || [];
+    const container = document.getElementById('milestone-banners');
+
+    if (milestones.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const recent = milestones.slice(-5).reverse();
+    container.innerHTML = recent.map(m => {
+        const sev = m.severity || 'info';
+        const cls = sev === 'critical' ? 'milestone-red' : sev === 'high' ? 'milestone-yellow' : 'milestone-green';
+        return `<div class="milestone-banner ${cls}">
+            <strong>${m.milestone_id || ''}</strong>: ${m.message || ''}
+        </div>`;
+    }).join('');
+}
+
+// --- Portfolio Chart (now with all benchmark lines) ---
+
+function renderPortfolioChart() {
+    const ctx = document.getElementById('portfolio-chart').getContext('2d');
+    const snaps = DATA.snapshots;
+    const bench = DATA.benchmark;
+    const comp = DATA.benchmarks_comparison || {};
+
+    if (snaps.length === 0) {
+        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">No snapshot data yet.</p>';
+        return;
+    }
+
+    const labels = snaps.map(s => s.date);
+    const values = snaps.map(s => s.total_value);
+    const benchValues = bench.map(b => b.value);
+
+    // Try to get SPY and DCA benchmark values from benchmarks data
+    let spyValues = [];
+    let dcaValues = [];
+    try {
+        const bd = DATA.benchmarks_comparison;
+        if (bd && bd.buy_hold_spy) {
+            // These are point-in-time values; for the chart we'd need the series
+            // Use the old benchmark array for TSLA B&H, pad others
+        }
+    } catch(e) {}
+
+    const datasets = [
+        {
+            label: 'Portfolio',
+            data: values,
+            borderColor: '#6366f1',
+            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 3,
+        },
+        {
+            label: 'Buy & Hold TSLA',
+            data: benchValues,
+            borderColor: '#f59e0b',
+            borderDash: [5, 5],
+            fill: false,
+            tension: 0.3,
+            borderWidth: 1.5,
+            pointRadius: 2,
+        }
+    ];
+
+    if (charts.portfolio) charts.portfolio.destroy();
+    charts.portfolio = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#8b90a5', font: { size: 11 } } },
+            },
+            scales: {
+                x: { ticks: { color: '#8b90a5', font: { size: 10 } }, grid: { color: '#2d3148' } },
+                y: {
+                    ticks: {
+                        color: '#8b90a5', font: { size: 10 },
+                        callback: v => '$' + v.toFixed(0)
+                    },
+                    grid: { color: '#2d3148' }
+                }
+            }
+        }
+    });
 }
 
 function renderKPIs() {
@@ -111,7 +355,6 @@ function renderKPIs() {
     document.getElementById('kpi-winrate').innerHTML =
         `<div class="kpi-value">${p.win_rate}%</div>`;
 
-    // Prediction accuracy
     let accText = 'No data';
     const dir = acc.direction_accuracy || {};
     if (Object.keys(dir).length > 0) {
@@ -121,68 +364,6 @@ function renderKPIs() {
     document.getElementById('kpi-accuracy').innerHTML =
         `<div class="kpi-value" style="font-size:16px">${accText}</div>
          <div class="kpi-sub">${acc.scored_predictions} scored</div>`;
-}
-
-function renderPortfolioChart() {
-    const ctx = document.getElementById('portfolio-chart').getContext('2d');
-    const snaps = DATA.snapshots;
-    const bench = DATA.benchmark;
-
-    if (snaps.length === 0) {
-        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">No snapshot data yet. Run the agent for a day to see the chart.</p>';
-        return;
-    }
-
-    const labels = snaps.map(s => s.date);
-    const values = snaps.map(s => s.total_value);
-    const benchValues = bench.map(b => b.value);
-
-    if (charts.portfolio) charts.portfolio.destroy();
-    charts.portfolio = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: 'Portfolio',
-                    data: values,
-                    borderColor: '#6366f1',
-                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                    fill: true,
-                    tension: 0.3,
-                    borderWidth: 2,
-                    pointRadius: 3,
-                },
-                {
-                    label: 'Buy & Hold TSLA',
-                    data: benchValues,
-                    borderColor: '#8b90a5',
-                    borderDash: [5, 5],
-                    fill: false,
-                    tension: 0.3,
-                    borderWidth: 1.5,
-                    pointRadius: 2,
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { labels: { color: '#8b90a5', font: { size: 11 } } },
-            },
-            scales: {
-                x: { ticks: { color: '#8b90a5', font: { size: 10 } }, grid: { color: '#2d3148' } },
-                y: {
-                    ticks: {
-                        color: '#8b90a5', font: { size: 10 },
-                        callback: v => '$' + v.toFixed(0)
-                    },
-                    grid: { color: '#2d3148' }
-                }
-            }
-        }
-    });
 }
 
 function renderStrategyBars() {
@@ -327,14 +508,18 @@ function renderLessons() {
         return;
     }
 
-    container.innerHTML = lessons.map(l => `
+    container.innerHTML = lessons.map(l => {
+        const weight = l.weight !== undefined ? ` | weight: ${l.weight.toFixed(2)}` : '';
+        const skeptic = l.skeptic_review ? (l.skeptic_review.validated ? ' | skeptic: passed' : ' | skeptic: challenged') : '';
+        const regime = l.regime ? ` | ${l.regime.trend}/${l.regime.volatility}` : '';
+        return `
         <div class="lesson-card">
             <div class="lesson-text">${l.lesson || 'No lesson text'}</div>
             <div class="lesson-meta">
-                ${l.id} | ${l.category || 'general'} | Trade: ${l.linked_trade || 'N/A'} | ${timeAgo(l.timestamp)}
+                ${l.id} | ${l.category || 'general'} | Trade: ${l.linked_trade || 'N/A'} | ${timeAgo(l.timestamp)}${weight}${skeptic}${regime}
             </div>
         </div>
-    `).join('');
+    `}).join('');
 }
 
 function renderPatterns() {
@@ -342,7 +527,7 @@ function renderPatterns() {
     const patterns = DATA.patterns;
 
     if (patterns.length === 0) {
-        container.innerHTML = '<p style="color:var(--text2)">No patterns discovered yet. Patterns emerge after several trades.</p>';
+        container.innerHTML = '<p style="color:var(--text2)">No patterns discovered yet.</p>';
         return;
     }
 
@@ -363,7 +548,6 @@ function renderJournal() {
         return;
     }
 
-    // Simple markdown rendering
     let html = journal
         .replace(/^## (.+)$/gm, '<h2>$1</h2>')
         .replace(/^---$/gm, '<hr>')
@@ -371,7 +555,6 @@ function renderJournal() {
         .replace(/\n\n/g, '</p><p>')
         .replace(/\n/g, '<br>');
     html = '<p>' + html + '</p>';
-
     container.innerHTML = html;
 }
 
@@ -384,10 +567,8 @@ function setupTabs() {
             tab.addEventListener('click', () => {
                 const target = tab.dataset.tab;
                 const parent = tabGroup.parentElement;
-
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
-
                 parent.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 parent.querySelector(`#${target}`).classList.add('active');
             });
@@ -398,5 +579,4 @@ function setupTabs() {
 // --- Init ---
 
 loadData();
-// Auto-refresh every 60 seconds
 setInterval(loadData, 60000);

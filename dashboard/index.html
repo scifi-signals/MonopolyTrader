@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MonopolyTrader Dashboard</title>
+    <title>MonopolyTrader v3 Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
@@ -14,7 +14,7 @@
 
         <!-- Header -->
         <header>
-            <h1>MonopolyTrader</h1>
+            <h1>MonopolyTrader <span class="version-tag">v3</span></h1>
             <div class="live-badge">
                 <div class="live-dot"></div>
                 <span id="live-price">Loading...</span>
@@ -30,6 +30,34 @@
 
             <!-- Market Status Banner -->
             <div id="status-banner" class="status-banner"></div>
+
+            <!-- Milestone Banners -->
+            <div id="milestone-banners"></div>
+
+            <!-- Am I Beating the Market? (PRIMARY VIEW) -->
+            <div class="card benchmark-card">
+                <h2>Am I Beating the Market?</h2>
+                <div id="verdict-badge" class="verdict-badge"></div>
+                <div id="benchmark-bars" class="benchmark-bars"></div>
+                <div id="benchmark-detail" class="benchmark-detail"></div>
+            </div>
+
+            <!-- Graduation Progress -->
+            <div class="card">
+                <h2>Graduation Progress</h2>
+                <div id="graduation-grid" class="graduation-grid"></div>
+            </div>
+
+            <!-- Portfolio Chart with ALL benchmark lines -->
+            <div class="card">
+                <h2>Portfolio Value vs Benchmarks</h2>
+                <div class="chart-container">
+                    <canvas id="portfolio-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Health & Alerts Strip -->
+            <div id="health-strip" class="health-strip"></div>
 
             <!-- KPI Strip -->
             <div class="kpi-strip">
@@ -56,14 +84,6 @@
                 <div class="kpi">
                     <div class="kpi-label">Prediction Accuracy</div>
                     <div id="kpi-accuracy"></div>
-                </div>
-            </div>
-
-            <!-- Portfolio Chart -->
-            <div class="card">
-                <h2>Portfolio Value vs Buy & Hold</h2>
-                <div class="chart-container">
-                    <canvas id="portfolio-chart"></canvas>
                 </div>
             </div>
 

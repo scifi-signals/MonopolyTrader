@@ -6,6 +6,7 @@ import yfinance as yf
 from anthropic import Anthropic
 from .utils import load_config, format_currency, iso_now, setup_logging
 from .knowledge_base import get_relevant_knowledge, add_prediction
+from .market_data import get_bsm_signals
 from .strategies import StrategySignal
 
 logger = setup_logging("agent")
@@ -16,15 +17,20 @@ You have a knowledge base of lessons from past trades, patterns you've discovere
 
 Every trade is a hypothesis. State clearly what you predict will happen and why. You will be reviewed on this prediction later.
 
-RISK RULES (you MUST follow these):
-- Max position: 90% of portfolio value
-- Max single trade: 25% of portfolio value
-- Min cash reserve: 10% of portfolio value
-- Stop loss: auto-sell at 5% loss (handled automatically)
+RISK RULES (v3 — you MUST follow these):
+- Max position: 65% of portfolio value (TSLA is too volatile for more)
+- Max single trade: 20% of portfolio value
+- Min cash reserve: 15% of portfolio value
+- Stop loss: dynamic ATR-based (wider stops in high volatility)
+- Position sizing: inverse ATR (wider stop = smaller position, max 2% risk per trade)
 - Cooldown: 15 min between trades
 - If daily loss exceeds 8%, stop trading
+- Macro gate: if SPY down >2% or VIX >30, require confidence >0.80 for BUY
+- Earnings blackout: no new BUY within 48 hours of TSLA earnings
 
-When deciding trade size, be conservative early on. Small positions let you learn without blowing up. As your accuracy improves, you can size up.
+When deciding trade size, be conservative early on. The system will cap your shares based on ATR sizing. Small positions let you learn without blowing up.
+
+Be a scientific instrument, not a storyteller. Base decisions on data, not narratives.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -173,6 +179,24 @@ def _format_knowledge(knowledge: dict) -> str:
     return "\n".join(parts) if parts else "Knowledge base is empty — first trading session."
 
 
+def _format_bsm_signals(bsm_signals: list[dict]) -> str:
+    """Format BSM (Billionaire Signal Monitor) signals for the agent prompt."""
+    if not bsm_signals:
+        return ""
+    parts = ["Active BSM Signals:"]
+    for sig in bsm_signals:
+        parts.append(
+            f"  [{sig.get('source_person', 'unknown')}] {sig.get('ticker', '?')} "
+            f"{sig.get('direction', '?')} (strength={sig.get('strength', 0):.2f}, "
+            f"conf={sig.get('confidence', 0):.2f})"
+        )
+        if sig.get("summary"):
+            parts.append(f"    {sig['summary'][:150]}")
+        if sig.get("time_horizon"):
+            parts.append(f"    Horizon: {sig['time_horizon']}")
+    return "\n".join(parts)
+
+
 def _fetch_news(ticker: str) -> str:
     """Fetch recent news headlines for sentiment context."""
     try:
@@ -199,6 +223,8 @@ def make_decision(
     aggregate: StrategySignal,
     portfolio: dict,
     knowledge: dict = None,
+    macro_gate: dict = None,
+    regime: dict = None,
 ) -> dict:
     """Call Claude to make a trading decision.
 
@@ -213,11 +239,32 @@ def make_decision(
     # Fetch news for sentiment context
     news = _fetch_news(ticker)
 
+    # Fetch BSM signals
+    bsm_signals = get_bsm_signals()
+    bsm_section = ""
+    if bsm_signals:
+        bsm_section = f"\n<bsm_signals>\n{_format_bsm_signals(bsm_signals)}\n\nNOTE: If BSM signals are bearish but your technical analysis is bullish, cap position to 10% of portfolio value.\n</bsm_signals>\n"
+
+    # Build macro/regime section
+    macro_section = ""
+    if regime or macro_gate:
+        r = regime or market_data.get("regime", {})
+        mg = macro_gate or {}
+        macro_section = f"""
+<macro_regime>
+Trend: {r.get('trend', 'unknown')} | Volatility: {r.get('volatility', 'unknown')} | VIX: {r.get('vix', 0):.1f}
+SPY Daily Change: {mg.get('spy_change_pct', 0)*100:.2f}%
+Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 'Normal'}
+{('Required confidence for BUY: ' + str(mg.get('confidence_threshold_override', 0.80))) if mg.get('gate_active') else ''}
+</macro_regime>
+"""
+
     # Build the user prompt
+    max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
     user_prompt = f"""<market_data>
 {_format_market_data(market_data)}
 </market_data>
-
+{macro_section}
 <strategy_signals>
 {_format_signals(signals, aggregate)}
 </strategy_signals>
@@ -233,9 +280,9 @@ def make_decision(
 <recent_news>
 {news}
 </recent_news>
-
+{bsm_section}
 Analyze all data and decide: BUY, SELL, or HOLD.
-If BUY or SELL, specify how many shares (fractional OK, max trade = 25% of portfolio value = {format_currency(portfolio.get('total_value', 1000) * 0.25)}).
+If BUY or SELL, specify how many shares (fractional OK, max trade = 20% of portfolio value = {format_currency(max_trade)}).
 Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
 Respond with JSON only."""
 
@@ -278,12 +325,33 @@ Respond with JSON only."""
                 "reasoning": decision.get("hypothesis", ""),
                 "outcomes": {k: None for k in predictions},
                 "linked_trade": None,
+                "model_version": config["anthropic_model"],
             }
             saved = add_prediction(pred_record)
             decision["_prediction_id"] = saved["id"]
 
         # Pass through sentiment score for strategy tracking
         decision["_sentiment_score"] = decision.get("sentiment_score")
+        decision["_model_version"] = config["anthropic_model"]
+
+        # BSM conviction cap: if BSM bearish + agent bullish, cap at 10%
+        if bsm_signals and decision.get("action") == "BUY":
+            bearish_bsm = [s for s in bsm_signals if s.get("direction") == "bearish"]
+            if bearish_bsm:
+                current_price = market_data.get("current", {}).get("price", 0)
+                bsm_cap_pct = config.get("risk_params", {}).get("bsm_conviction_cap_pct", 0.10)
+                bsm_max_value = portfolio.get("total_value", 1000) * bsm_cap_pct
+                bsm_max_shares = bsm_max_value / current_price if current_price > 0 else 0
+                if decision.get("shares", 0) > bsm_max_shares:
+                    logger.info(
+                        f"BSM cap: bearish signal conflicts with BUY — "
+                        f"capping {decision['shares']:.4f} to {bsm_max_shares:.4f} shares"
+                    )
+                    decision["shares"] = round(bsm_max_shares, 4)
+                    decision["risk_note"] = (
+                        decision.get("risk_note", "") +
+                        f" [BSM conviction cap applied: {bsm_cap_pct*100:.0f}%]"
+                    )
 
         return decision
 

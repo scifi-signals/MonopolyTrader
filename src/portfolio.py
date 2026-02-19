@@ -91,9 +91,10 @@ def update_market_price(portfolio: dict, ticker: str, current_price: float) -> d
     return portfolio
 
 
-def validate_trade(action: str, shares: float, price: float, portfolio: dict) -> tuple[bool, str]:
+def validate_trade(action: str, shares: float, price: float, portfolio: dict, config: dict = None) -> tuple[bool, str]:
     """Check if a trade passes all risk rules. Returns (ok, reason)."""
-    config = load_config()
+    if config is None:
+        config = load_config()
     risk = config["risk_params"]
     ticker = config["ticker"]
 
@@ -145,8 +146,13 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
     portfolio = load_portfolio()
     transactions = load_transactions()
 
-    # Apply slippage
-    slippage = config.get("slippage_pct", 0.001)
+    # Apply slippage — use volatile rate when VIX > 25
+    risk = config["risk_params"]
+    base_slippage = risk.get("slippage_per_side_pct", config.get("slippage_pct", 0.001))
+    volatile_slippage = risk.get("slippage_volatile_per_side_pct", base_slippage)
+    # Check if we're in volatile conditions (decision dict may carry vix)
+    vix = (decision or {}).get("_vix", 0)
+    slippage = volatile_slippage if vix > 25 else base_slippage
     if action == "BUY":
         exec_price = round(price * (1 + slippage), 2)
     else:
@@ -225,8 +231,12 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
     return {"status": "executed", "transaction": txn, "portfolio": portfolio}
 
 
-def check_stop_losses(current_price: float) -> dict | None:
-    """Check if any position triggers a stop loss. Returns a sell signal or None."""
+def check_stop_losses(current_price: float, atr: float = None, vix: float = None) -> dict | None:
+    """Check if any position triggers a stop loss.
+
+    Uses dynamic ATR-based stops when atr is provided, falls back to
+    a fixed 8% emergency stop otherwise.
+    """
     config = load_config()
     ticker = config["ticker"]
     portfolio = load_portfolio()
@@ -235,21 +245,100 @@ def check_stop_losses(current_price: float) -> dict | None:
     if h.get("shares", 0) <= 0:
         return None
 
-    loss_pct = (current_price - h["avg_cost_basis"]) / h["avg_cost_basis"]
-    stop_threshold = -config["risk_params"]["stop_loss_pct"]
+    risk = config["risk_params"]
+    entry = h["avg_cost_basis"]
 
-    if loss_pct <= stop_threshold:
-        logger.warning(
-            f"STOP LOSS triggered: {ticker} at ${current_price:.2f} "
-            f"(cost basis ${h['avg_cost_basis']:.2f}, loss {loss_pct*100:.1f}%)"
-        )
-        return {
-            "action": "SELL",
-            "shares": h["shares"],
-            "reason": f"Stop loss triggered at {loss_pct*100:.1f}% loss",
-            "strategy": "stop_loss",
-        }
+    if risk.get("stop_loss_method") == "dynamic_atr" and atr and atr > 0:
+        # ATR-based dynamic stop
+        multipliers = risk.get("stop_loss_atr_multipliers", {})
+        vix_thresholds = multipliers.get("vix_thresholds", [20, 30])
+        vix_val = vix or 0
+
+        if vix_val < vix_thresholds[0]:
+            mult = multipliers.get("low_vix", 2.0)
+        elif vix_val < vix_thresholds[1]:
+            mult = multipliers.get("normal_vix", 2.5)
+        else:
+            mult = multipliers.get("high_vix", 3.0)
+
+        stop_price = entry - (atr * mult)
+        if current_price <= stop_price:
+            loss_pct = (current_price - entry) / entry * 100
+            logger.warning(
+                f"ATR STOP LOSS triggered: {ticker} at ${current_price:.2f} "
+                f"(entry ${entry:.2f}, ATR stop ${stop_price:.2f}, "
+                f"mult={mult}, ATR={atr:.2f}, VIX={vix_val:.1f}, loss {loss_pct:.1f}%)"
+            )
+            return {
+                "action": "SELL",
+                "shares": h["shares"],
+                "reason": f"ATR stop loss at ${stop_price:.2f} (ATR={atr:.2f}x{mult}, loss {loss_pct:.1f}%)",
+                "strategy": "stop_loss",
+            }
+    else:
+        # Emergency fixed stop at 8%
+        loss_pct = (current_price - entry) / entry
+        if loss_pct <= -0.08:
+            logger.warning(
+                f"EMERGENCY STOP LOSS triggered: {ticker} at ${current_price:.2f} "
+                f"(cost basis ${entry:.2f}, loss {loss_pct*100:.1f}%)"
+            )
+            return {
+                "action": "SELL",
+                "shares": h["shares"],
+                "reason": f"Emergency stop loss at {loss_pct*100:.1f}% loss",
+                "strategy": "stop_loss",
+            }
     return None
+
+
+def calculate_position_size(
+    portfolio_value: float,
+    entry_price: float,
+    atr: float,
+    vix: float = 0,
+    config: dict = None,
+) -> float:
+    """Calculate position size using inverse ATR method.
+
+    Wider stop (higher ATR) = smaller position. Risk max 2% of portfolio per trade.
+    Returns max shares to buy.
+    """
+    if config is None:
+        config = load_config()
+
+    risk = config["risk_params"]
+    max_risk_pct = risk.get("max_risk_per_trade_pct", 0.02)
+    max_trade_pct = risk.get("max_single_trade_pct", 0.20)
+
+    # ATR stop distance
+    multipliers = risk.get("stop_loss_atr_multipliers", {})
+    vix_thresholds = multipliers.get("vix_thresholds", [20, 30])
+
+    if vix < vix_thresholds[0]:
+        mult = multipliers.get("low_vix", 2.0)
+    elif vix < vix_thresholds[1]:
+        mult = multipliers.get("normal_vix", 2.5)
+    else:
+        mult = multipliers.get("high_vix", 3.0)
+
+    stop_distance = atr * mult if atr > 0 else entry_price * 0.05
+
+    # Risk-based sizing: risk_amount / stop_distance = max shares
+    risk_amount = portfolio_value * max_risk_pct
+    risk_shares = risk_amount / stop_distance if stop_distance > 0 else 0
+
+    # Also cap by max single trade %
+    max_trade_value = portfolio_value * max_trade_pct
+    trade_shares = max_trade_value / entry_price if entry_price > 0 else 0
+
+    max_shares = min(risk_shares, trade_shares)
+
+    logger.info(
+        f"Position sizing: ATR={atr:.2f}, mult={mult}, stop_dist=${stop_distance:.2f}, "
+        f"risk_shares={risk_shares:.4f}, trade_shares={trade_shares:.4f}, max={max_shares:.4f}"
+    )
+    return round(max_shares, 4)
 
 
 def check_daily_loss_limit() -> bool:

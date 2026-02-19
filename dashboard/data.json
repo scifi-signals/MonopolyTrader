@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-19T02:09:30.243308+00:00",
+  "generated_at": "2026-02-19T02:23:38.994775+00:00",
   "ticker": "TSLA",
   "current_price": {
     "price": 411.2,
@@ -178,8 +178,8 @@
   },
   "verdict": "too_early",
   "health": {
-    "timestamp": "2026-02-19T02:09:30.232370+00:00",
-    "overall": false,
+    "timestamp": "2026-02-19T02:23:38.990076+00:00",
+    "overall": true,
     "components": {
       "market_data": {
         "healthy": true,
@@ -194,8 +194,8 @@
         "detail": "0 lessons, 0 patterns"
       },
       "claude_api": {
-        "healthy": false,
-        "detail": "No API key"
+        "healthy": true,
+        "detail": "API key found"
       }
     }
   },
@@ -306,7 +306,7 @@
   },
   "weight_history": [
     {
-      "timestamp": "2026-02-19T02:09:30.184022+00:00",
+      "timestamp": "2026-02-19T02:23:38.924236+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -316,7 +316,7 @@
       }
     },
     {
-      "timestamp": "2026-02-19T02:09:30.184037+00:00",
+      "timestamp": "2026-02-19T02:23:38.924267+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -352,7 +352,7 @@
   },
   "knowledge_summary": "MonopolyTrader has 0 lessons and 0 patterns.",
   "market_open": false,
-  "time_et": "2026-02-18 21:09 ET",
+  "time_et": "2026-02-18 21:23 ET",
   "ensemble": {
     "agents": {
       "alpha": {

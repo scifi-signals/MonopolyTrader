@@ -10,13 +10,15 @@ from datetime import datetime
 
 from .utils import (
     load_config, is_market_open, now_et, iso_now,
-    format_currency, format_pct, setup_logging, DATA_DIR
+    format_currency, format_pct, setup_logging, DATA_DIR,
+    load_json,
 )
 from .market_data import get_current_price, get_market_summary, check_macro_gate, classify_regime
 from .portfolio import (
     load_portfolio, execute_trade, save_portfolio, save_snapshot,
     check_stop_losses, check_daily_loss_limit, check_cooldown,
     update_market_price, get_portfolio_summary, calculate_position_size,
+    apply_gap_risk_reduction,
 )
 from .strategies import evaluate_all_strategies, aggregate_signals
 from .agent import make_decision
@@ -112,16 +114,17 @@ def run_cycle():
             logger.info("Cooldown active — skipping decision")
             return
 
-        # 7. Run strategy signals
+        # 7. Run strategy signals (regime-aware)
         scores = get_strategy_scores()
-        signals = evaluate_all_strategies(market_data, portfolio, scores)
+        signals = evaluate_all_strategies(market_data, portfolio, scores, regime=regime)
         aggregate = aggregate_signals(signals)
         logger.info(f"Aggregate signal: {aggregate.action} (conf={aggregate.confidence:.2f})")
 
-        # 8. Calculate position size (inverse ATR)
+        # 8. Calculate position size (inverse ATR + gap risk reduction)
         max_shares = calculate_position_size(
             portfolio["total_value"], current_price, atr, vix, config
         )
+        max_shares = apply_gap_risk_reduction(max_shares, config)
 
         # 9. Get knowledge context
         knowledge = get_relevant_knowledge(market_data)
@@ -489,13 +492,14 @@ def run_once():
             return
 
         scores = get_strategy_scores()
-        signals = evaluate_all_strategies(market_data, portfolio, scores)
+        signals = evaluate_all_strategies(market_data, portfolio, scores, regime=regime)
         aggregate = aggregate_signals(signals)
 
-        # Position sizing
+        # Position sizing with gap risk reduction
         max_shares = calculate_position_size(
             portfolio["total_value"], current_price, atr, vix, config
         )
+        max_shares = apply_gap_risk_reduction(max_shares, config)
         print(f"ATR position cap: {max_shares:.4f} shares")
 
         knowledge = get_relevant_knowledge(market_data)
@@ -541,6 +545,7 @@ def run_once():
 def main():
     parser = argparse.ArgumentParser(description="MonopolyTrader - AI Stock Trading Agent")
     parser.add_argument("--once", action="store_true", help="Run a single decision cycle")
+    parser.add_argument("--ensemble", action="store_true", help="Run ensemble cycle (all agents)")
     parser.add_argument("--bootstrap", action="store_true", help="Run first-time setup (research before trading)")
     parser.add_argument("--research", action="store_true", help="Run daily research cycle")
     parser.add_argument("--learn", action="store_true", help="Run learning cycle (review trades, discover patterns)")
@@ -549,11 +554,143 @@ def main():
     parser.add_argument("--backtest", action="store_true", help="Run walk-forward backtest vs random traders")
     parser.add_argument("--health", action="store_true", help="Check system health status")
     parser.add_argument("--alerts", action="store_true", help="Show active anomaly alerts")
+    parser.add_argument("--leaderboard", action="store_true", help="Show agent ensemble leaderboard")
+    parser.add_argument("--explain-trade", type=str, metavar="TXN_ID", help="Explain a specific trade decision")
+    parser.add_argument("--milestones", action="store_true", help="Show triggered milestones")
+    parser.add_argument("--graduation-report", action="store_true", help="Show graduation criteria status")
+    parser.add_argument("--debug-traces", type=int, nargs="?", const=5, metavar="N", help="Show last N decision traces")
+    parser.add_argument("--influence-report", action="store_true", help="Show strategy influence breakdown")
     args = parser.parse_args()
 
     init_kb()
 
-    if args.backtest:
+    if args.ensemble:
+        from .ensemble import run_ensemble_cycle
+        if not is_market_open():
+            print("Market is closed. Running ensemble cycle anyway for testing...")
+        results = run_ensemble_cycle()
+        print(f"\nEnsemble Results ({len(results)} agents)")
+        print("=" * 60)
+        for r in results:
+            print(
+                f"  [{r.get('agent', '?')}] {r.get('action', '?')} "
+                f"conf={r.get('confidence', 0):.2f} "
+                f"value=${r.get('portfolio_value', 0):.2f} "
+                f"({r.get('execution', '?')})"
+            )
+        print()
+        return
+    elif args.leaderboard:
+        from .comparison import generate_leaderboard
+        lb = generate_leaderboard()
+        if not lb:
+            print("No agent data yet. Run --ensemble first.")
+        else:
+            print(f"\nAgent Leaderboard")
+            print("=" * 70)
+            print(f"{'#':<4} {'Agent':<25} {'Return':>8} {'Trades':>7} {'Win%':>6} {'Sharpe':>7} {'MaxDD':>7}")
+            print("-" * 70)
+            for m in lb:
+                print(
+                    f"{m['rank']:<4} {m['display_name']:<25} "
+                    f"{m['total_pnl_pct']:>+7.2f}% {m['total_trades']:>7} "
+                    f"{m['win_rate']:>5.0f}% {m['sharpe_ratio']:>7.3f} "
+                    f"{m['max_drawdown_pct']:>6.1f}%"
+                )
+        print()
+        return
+    elif args.explain_trade:
+        _explain_trade(args.explain_trade)
+        return
+    elif args.milestones:
+        milestones = load_json(DATA_DIR / "milestones.json", default=[])
+        if milestones:
+            print(f"\nTriggered Milestones ({len(milestones)})")
+            print("=" * 60)
+            for m in milestones:
+                print(f"  [{m.get('severity', 'info')}] {m.get('milestone_id', '?')}")
+                print(f"    {m.get('message', '')[:100]}")
+                print(f"    Triggered: {m.get('triggered_at', '?')}")
+        else:
+            print("\nNo milestones triggered yet.")
+        print()
+        return
+    elif args.graduation_report:
+        try:
+            from .benchmarks import BenchmarkTracker
+            portfolio = load_portfolio()
+            bt = BenchmarkTracker()
+            comparison = bt.get_comparison(portfolio["total_value"])
+            grad = comparison.get("graduation_criteria", {})
+            print(f"\nGraduation Report")
+            print("=" * 60)
+            passed = 0
+            total = 0
+            for name, criteria in grad.items():
+                total += 1
+                icon = "PASS" if criteria.get("passed") else "FAIL"
+                if criteria.get("passed"):
+                    passed += 1
+                print(f"  [{icon}] {name}: {criteria.get('actual', '?')} (required: {criteria.get('required', '?')})")
+            print(f"\n  {passed}/{total} criteria met")
+        except Exception as e:
+            print(f"Graduation report error: {e}")
+        print()
+        return
+    elif args.debug_traces:
+        from .utils import LOGS_DIR
+        traces_dir = LOGS_DIR / "traces"
+        if not traces_dir.exists():
+            print("No traces directory yet. Run a trading cycle first.")
+            return
+        # Find the latest trace files
+        trace_files = sorted(traces_dir.rglob("trace_*.json"), reverse=True)
+        n = args.debug_traces
+        if not trace_files:
+            print("No traces found.")
+        else:
+            print(f"\nLatest {min(n, len(trace_files))} Decision Traces")
+            print("=" * 60)
+            for tf in trace_files[:n]:
+                trace = load_json(tf)
+                print(f"\n  File: {tf.name}")
+                print(f"  Time: {trace.get('timestamp', '?')}")
+                print(f"  Action: {trace.get('decision', {}).get('action', '?')}")
+                print(f"  Confidence: {trace.get('decision', {}).get('confidence', 0):.2f}")
+                regime = trace.get('regime', {})
+                print(f"  Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')}")
+                anomalies = trace.get('anomalies', [])
+                if anomalies:
+                    print(f"  Anomalies: {', '.join(str(a) for a in anomalies)}")
+        print()
+        return
+    elif args.influence_report:
+        scores = get_strategy_scores()
+        transactions = load_portfolio()
+        print(f"\nStrategy Influence Report")
+        print("=" * 60)
+        for name, s in scores.get("strategies", {}).items():
+            pnl = s.get("total_pnl", 0)
+            trades = s.get("total_trades", 0)
+            wr = s.get("win_rate", 0) * 100
+            trend = s.get("trend", "neutral")
+            print(f"  {name:20s} weight={s['weight']:.3f} trades={trades:3d} "
+                  f"win_rate={wr:5.1f}% pnl=${pnl:+.2f} trend={trend}")
+        print()
+        # Show current portfolio allocation
+        portfolio = load_portfolio()
+        print("Portfolio Allocation")
+        print("-" * 40)
+        for ticker, h in portfolio.get("holdings", {}).items():
+            if h.get("shares", 0) > 0:
+                value = h["shares"] * h.get("current_price", 0)
+                pct = (value / portfolio["total_value"] * 100) if portfolio["total_value"] > 0 else 0
+                print(f"  {ticker}: {h['shares']:.4f} shares (${value:.2f}, {pct:.1f}%)")
+        cash_pct = (portfolio["cash"] / portfolio["total_value"] * 100) if portfolio["total_value"] > 0 else 0
+        print(f"  Cash: ${portfolio['cash']:.2f} ({cash_pct:.1f}%)")
+        print()
+        return
+    elif args.backtest:
         from .backtest import WalkForwardBacktest
         bt = WalkForwardBacktest()
         bt.run_all()
@@ -608,6 +745,41 @@ def main():
             logger.info("First run detected — running bootstrap...")
             asyncio.run(bootstrap())
         run_scheduler()
+
+
+def _explain_trade(txn_id: str):
+    """Print detailed explanation of a specific trade."""
+    from .portfolio import load_transactions
+    transactions = load_transactions()
+    txn = next((t for t in transactions if t["id"] == txn_id), None)
+
+    if not txn:
+        # Also search agent transactions
+        from .ensemble import list_agents, load_agent_transactions
+        for name in list_agents():
+            agent_txns = load_agent_transactions(name)
+            txn = next((t for t in agent_txns if t["id"] == txn_id), None)
+            if txn:
+                print(f"(Found in agent: {name})")
+                break
+
+    if not txn:
+        print(f"Trade {txn_id} not found.")
+        return
+
+    print(f"\nTrade Explanation: {txn_id}")
+    print("=" * 60)
+    print(f"  Time:       {txn.get('timestamp', '?')}")
+    print(f"  Action:     {txn.get('action', '?')} {txn.get('shares', 0):.4f} shares @ ${txn.get('price', 0):.2f}")
+    print(f"  Strategy:   {txn.get('strategy', '?')}")
+    print(f"  Confidence: {txn.get('confidence', 0):.2f}")
+    print(f"  Hypothesis: {txn.get('hypothesis', 'N/A')}")
+    print(f"  Reasoning:  {txn.get('reasoning', 'N/A')}")
+    if txn.get("realized_pnl") is not None:
+        print(f"  P&L:        ${txn['realized_pnl']:.2f}")
+    if txn.get("review"):
+        print(f"  Review:     {txn['review']}")
+    print()
 
 
 def _print_status():

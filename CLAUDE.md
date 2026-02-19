@@ -829,56 +829,69 @@ python-dateutil>=2.8.0
 Build and test in this order:
 
 ### Phase 0 — Walk-Forward Backtest Sanity Check (BUILD THIS FIRST)
-1. Download 2022-2025 TSLA OHLCV data via yfinance
-2. Implement technical strategies against historical data (no LLM needed)
-3. Run 100 random trader simulations on same data
-4. Test dynamic ATR stops against real TSLA volatility including overnight gaps
-5. Compare strategy returns vs random and buy-and-hold
-6. **If no strategy beats random on historical data, STOP — the learning loop has nothing to learn from**
+1. Download 2022-2025 TSLA + SPY OHLCV daily data via yfinance
+2. Implement the 5 technical strategies (momentum, mean reversion, sentiment proxy via volume/price patterns, technical signals, DCA) against historical data — no LLM needed
+3. Implement dynamic ATR stop losses (2x/2.5x/3x by VIX regime) with inverse position sizing
+4. Implement slippage simulation (0.05% per side baseline, 0.15% when VIX > 25)
+5. Implement the regime classifier (50-day SPY slope + VIX terciles)
+6. Run 100 random trader simulations on the same data with same risk rules
+7. Calculate all benchmark comparisons (buy-and-hold TSLA, SPY, DCA $50/week)
+8. Output results report: do any strategies beat random traders on risk-adjusted metrics?
+9. **If no strategy beats random on 3 years of historical data, STOP — the learning loop has nothing to learn from. Trigger PHASE_0_FAIL milestone.**
 
 ### Phase 1 — Foundation
-1. `config.json` — Set up configuration
-2. `market_data.py` — Get price data flowing and indicators calculating
-3. `portfolio.py` — Portfolio state management and trade simulation
-4. `knowledge_base.py` — Read/write knowledge files (start with empty scaffolding)
-5. **Test**: Verify you can fetch TSLA data, calculate indicators, and execute a mock trade
+10. `config.json` — Full configuration including risk params, macro gate, kill switches, milestone alerts, slippage, ATR multipliers
+11. `market_data.py` — Price data, indicators, ATR, SPY, VIX, regime classifier (`classify_regime()`), macro gate check (`get_macro_regime()`)
+12. `portfolio.py` — Portfolio state management, trade simulation WITH slippage, dynamic ATR stop losses, inverse position sizing, gap risk sizing, earnings blackout check
+13. `benchmarks.py` — All 4 benchmarks (Buy&Hold TSLA, SPY, DCA, Random x100), slippage-adjusted performance, graduation criteria checker. See benchmarking-graduation-spec.md.
+14. `knowledge_base.py` — Read/write knowledge files with decay, regime tags, model version tracking (start with empty scaffolding)
+15. `utils.py` — Structured JSON logging, time helpers, formatting
+16. **Test**: Fetch TSLA + SPY + VIX data, calculate indicators + ATR + regime, execute a mock trade with slippage, verify benchmarks track correctly
 
-### Phase 2 — Intelligence + Benchmarks
-6. `strategies.py` — Implement all 5 strategy signal generators with dynamic weighting
-7. `benchmarks.py` — Implement all 4 benchmarks (Buy&Hold TSLA, SPY, DCA, Random x100). This must be built early — benchmarks are the primary success metric, not an afterthought. See benchmarking-graduation-spec.md for full details.
-8. `agent.py` — Wire up Claude API for decision-making with knowledge context
-9. **Test**: Feed real data through strategies → agent → mock trade. Verify hypothesis is recorded. Verify benchmarks are tracking.
+### Phase 2 — Intelligence
+17. `strategies.py` — All 5 strategy signal generators with dynamic weighting, regime-aware signals
+18. `agent.py` — Wire up Claude API (Sonnet for agent brain) for decision-making with knowledge context, macro regime, and BSM conviction caps. Include HOLD tracking with counterfactual logging.
+19. **Test**: Feed real data through strategies → agent → mock trade. Verify hypothesis recorded, HOLD counterfactuals logged, benchmarks updating.
 
 ### Phase 3 — Learning (the heart of the project)
-9. `learner.py` — Post-trade review, lesson extraction, pattern discovery, strategy evolution
-10. `researcher.py` — Deep research tasks that build TSLA knowledge
-11. **Test**: Execute a trade, wait for outcome, run review, verify lesson is created and strategy scores update
+20. `learner.py` — Post-trade review with Skeptic layer (separate cheaper model — Haiku), structured lesson categories, hard auto-reject rules, counterfactual sampling, lesson decay, regime tagging, model version tracking
+21. `researcher.py` — Deep research tasks that build TSLA knowledge (earnings history, tweet impact, correlations, seasonal patterns). Daily + on-demand.
+22. **Test**: Execute a trade, wait for outcome, run review through Skeptic, verify lesson is created with correct category/regime tag/model version, verify strategy scores update, verify Skeptic rejects a bogus "correlated market move" when SPY was flat
 
-### Phase 4 — Automation
-12. `main.py` — Build the scheduler with both decision cycle (5min) and research cycle (daily)
-13. Implement bootstrap sequence for first run (research before trading)
-14. `utils.py` — Logging, time helpers, formatting
-15. **Test**: Run for a full market day. Verify predictions are scored, lessons extracted, journal written.
+### Phase 4 — Automation + Ensemble
+23. `main.py` — Scheduler with decision cycle (15-min) and research cycle (daily). Implement bootstrap sequence for first run.
+24. `ensemble.py` — Multi-agent orchestrator for 3 agents (Alpha, Bravo, Echo). Each gets own portfolio, own config, same market data. Start ultra-lean with just Echo if preferred.
+25. `comparison.py` — Agent leaderboard, correlation analysis, harmony detection
+26. `milestones.py` — Milestone checker (positive + negative milestones), Decision Point Report generator, model upgrade awareness
+27. **Test**: Run for a full market day. Verify: predictions scored, lessons extracted with Skeptic review, journal written, milestones checked, benchmarks updated, ensemble comparison calculated.
 
-### Phase 5 — Dashboard
-16. `reporter.py` — Generate data JSON for dashboard
-17. `dashboard/index.html` + `style.css` + `app.js` — Build interactive dashboard
-18. Include: portfolio chart, prediction accuracy trend, strategy evolution chart, trade log with lessons, journal viewer
-19. **Test**: Run for several days, verify dashboard tells the story of the agent's learning journey
+### Phase 5 — Dashboard + Observability
+28. `reporter.py` — Generate data JSON for dashboard
+29. `observability.py` — Decision tracing, anomaly detection, health checks, influence tracking, kill switches. See observability-spec.md.
+30. `dashboard/index.html` + `style.css` + `app.js` — Build interactive dashboard with:
+    - **"Am I Beating the Market?"** as primary view (agent vs 4 benchmarks, verdict, agent percentile vs random)
+    - **Graduation Progress** — 12 criteria checklist, green/red status
+    - **Milestone Alerts** — prominent banners for positive/negative milestones with action buttons
+    - **Ensemble Leaderboard** (if multi-agent)
+    - Portfolio value chart with all benchmark lines overlaid
+    - Prediction accuracy trend over time
+    - Strategy weight evolution chart
+    - Trade log with hypothesis, outcome, lesson, Skeptic review
+    - HOLD log with counterfactual outcomes
+    - Agent journal
+    - Knowledge base browser (lessons with regime tags, decay weights)
+    - Health status + anomaly alerts
+    - Human audit button (1-click "this was dumb because..." on each trade)
+    - Regime timeline
+31. Add CLI debug commands: `--explain-trade`, `--influence-report`, `--alerts`, `--health`, `--debug-traces`, `--milestones`, `--graduation-report`
+32. **Test**: Run for several days. Verify dashboard tells the full story. Trigger a test milestone and verify it displays prominently.
 
-### Phase 6 — Observability (see observability-spec.md for full details)
-20. `observability.py` — Decision tracing, anomaly detection, health checks, influence tracking
-21. Add CLI debug commands: `--explain-trade`, `--influence-report`, `--alerts`, `--health`, `--debug-traces`
-22. Integrate anomaly checks into main decision cycle
-23. Add health status, alert display, and influence breakdown to dashboard
-24. **Test**: Make a bad trade intentionally, verify the anomaly detector catches it and the trace explains what happened
-
-### Phase 7 — Polish & Maturation
-20. Add benchmark comparison (buy-and-hold TSLA, SPY)
-21. Tune the learning loop — are lessons actually improving decisions?
-22. Add "what I'd do differently" retrospective analysis
-23. Stress test error handling (market closed, API down, etc.)
-24. Add ability for the agent to request custom research topics
+### Phase 6 — BSM Integration (SEPARATE PROJECT, build after MonopolyTrader is running)
+33. Build Billionaire Signal Monitor as separate project per billionaire-signal-monitor-CLAUDE.md
+34. Wire up signal output to MonopolyTrader's `data/bsm_signals/` directory
+35. Implement BSM conviction caps in agent decision logic (BSM bearish + tech bullish → cap at 10%)
+36. Verify Agent Bravo correctly reads and weights BSM signals as regime/context (not trade triggers)
+37. **Test**: Generate a mock BSM signal, verify it modifies conviction/sizing without triggering a trade on its own
 
 ---
 

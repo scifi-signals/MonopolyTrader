@@ -230,11 +230,59 @@ def sentiment_signal(news_sentiment: float | None, weight: float) -> StrategySig
 
 # --- Aggregation ---
 
+def _apply_regime_adjustment(signal: StrategySignal, regime: dict) -> StrategySignal:
+    """Adjust strategy confidence based on current market regime.
+
+    - Momentum gets boosted in bull/low-vol, penalized in bear/high-vol
+    - Mean reversion gets boosted in range-bound/high-vol
+    - Technical signals get penalized in high volatility
+    - DCA is regime-neutral
+    - Sentiment gets boosted when it aligns with regime direction
+    """
+    if not regime or signal.action == "HOLD":
+        return signal
+
+    trend = regime.get("trend", "sideways")
+    vol = regime.get("volatility", "normal")
+    multiplier = 1.0
+
+    if signal.strategy == "momentum":
+        if trend == "bull" and vol == "low":
+            multiplier = 1.2
+        elif trend == "bear":
+            multiplier = 0.7
+        elif vol == "high":
+            multiplier = 0.8
+    elif signal.strategy == "mean_reversion":
+        if trend == "sideways" or vol == "high":
+            multiplier = 1.2
+        elif trend in ("bull", "bear") and vol == "low":
+            multiplier = 0.8
+    elif signal.strategy == "technical_signals":
+        if vol == "high":
+            multiplier = 0.8
+    elif signal.strategy == "sentiment":
+        # Boost when sentiment direction aligns with regime
+        if signal.action == "BUY" and trend == "bull":
+            multiplier = 1.15
+        elif signal.action == "SELL" and trend == "bear":
+            multiplier = 1.15
+        elif signal.action == "BUY" and trend == "bear":
+            multiplier = 0.8
+
+    if multiplier != 1.0:
+        new_conf = round(min(signal.confidence * multiplier, 1.0), 2)
+        signal.confidence = new_conf
+
+    return signal
+
+
 def evaluate_all_strategies(
     market_data: dict,
     portfolio: dict,
     scores: dict = None,
     news_sentiment: float = None,
+    regime: dict = None,
 ) -> list[StrategySignal]:
     """Run all enabled strategies and return weighted signals."""
     config = load_config()
@@ -253,6 +301,10 @@ def evaluate_all_strategies(
     if intraday and intraday.get("current_price"):
         indicators = {**indicators, **intraday}
 
+    # Get regime from market_data if not passed explicitly
+    if regime is None:
+        regime = market_data.get("regime", {})
+
     if "momentum" in enabled:
         signals.append(momentum_signal(indicators, weights.get("momentum", 0.2)))
 
@@ -267,6 +319,9 @@ def evaluate_all_strategies(
 
     if "sentiment" in enabled:
         signals.append(sentiment_signal(news_sentiment, weights.get("sentiment", 0.2)))
+
+    # Apply regime adjustments to all signals
+    signals = [_apply_regime_adjustment(s, regime) for s in signals]
 
     for s in signals:
         logger.info(f"  [{s.strategy}] {s.action} conf={s.confidence:.2f} wt={s.weight:.2f} — {s.reasoning}")

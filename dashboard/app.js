@@ -47,6 +47,8 @@ function render() {
     renderGraduationChecklist();
     renderPortfolioChart();
     renderHealthStatus();
+    renderEnsembleLeaderboard();
+    renderHoldLog();
     renderKPIs();
     renderStrategyBars();
     renderWeightChart();
@@ -261,6 +263,107 @@ function renderMilestones() {
             <strong>${m.milestone_id || ''}</strong>: ${m.message || ''}
         </div>`;
     }).join('');
+}
+
+// --- Ensemble Leaderboard ---
+
+function renderEnsembleLeaderboard() {
+    const ensemble = DATA.ensemble || {};
+    const section = document.getElementById('ensemble-section');
+    const container = document.getElementById('ensemble-leaderboard');
+    const harmonyEl = document.getElementById('ensemble-harmony');
+
+    const agents = ensemble.agents || {};
+    if (Object.keys(agents).length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+
+    // Sort by return
+    const sorted = Object.entries(agents)
+        .map(([name, a]) => ({ name, ...a }))
+        .sort((a, b) => b.total_pnl_pct - a.total_pnl_pct);
+
+    let html = '<table class="data-table"><thead><tr>';
+    html += '<th>#</th><th>Agent</th><th>Value</th><th>Return</th><th>Trades</th><th>Win%</th><th>Learning</th>';
+    html += '</tr></thead><tbody>';
+
+    sorted.forEach((a, i) => {
+        const cls = pnlClass(a.total_pnl);
+        const learn = a.learning_enabled ? '<span class="badge badge-correct">ON</span>' : '<span class="badge badge-pending">OFF</span>';
+        const wins = a.winning_trades + a.losing_trades;
+        const wr = wins > 0 ? ((a.winning_trades / wins) * 100).toFixed(0) + '%' : '-';
+        html += `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${a.display_name || a.name}</strong></td>
+            <td>${fmt(a.total_value)}</td>
+            <td class="${cls}">${fmtPct(a.total_pnl_pct)}</td>
+            <td>${a.total_trades}</td>
+            <td>${wr}</td>
+            <td>${learn}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // Harmony summary
+    const harmony = ensemble.harmony || {};
+    if (harmony.avg_correlation !== undefined) {
+        harmonyEl.innerHTML = `
+            <div class="harmony-item">Avg Correlation: <strong>${harmony.avg_correlation?.toFixed(3) || 'N/A'}</strong></div>
+            <div class="harmony-item">Harmony Score: <strong>${harmony.harmony_score?.toFixed(2) || 'N/A'}</strong></div>
+            <div class="harmony-item">Diversification: <strong>${harmony.diversification_benefit ? 'Yes' : 'No'}</strong></div>
+        `;
+    }
+}
+
+// --- HOLD Log ---
+
+function renderHoldLog() {
+    const holds = DATA.hold_log_summary || {};
+    const section = document.getElementById('hold-section');
+    const container = document.getElementById('hold-log');
+
+    if (!holds.total_holds || holds.total_holds === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+
+    const recent = holds.recent || [];
+
+    let html = `<p style="color:var(--text2)">Total HOLD decisions: ${holds.total_holds}</p>`;
+    html += '<div class="hold-list">';
+
+    recent.forEach(h => {
+        const price = h.price_at_hold ? fmt(h.price_at_hold) : '-';
+        const strongest = h.strongest_signal_ignored;
+        const signalText = strongest
+            ? `${strongest.action} from ${strongest.strategy} (conf=${strongest.confidence?.toFixed(2)})`
+            : 'none';
+        const counterfactual = h.counterfactual_outcome
+            ? `<span class="${pnlClass(h.counterfactual_outcome)}">Outcome: ${fmtPct(h.counterfactual_outcome)}</span>`
+            : '<span style="color:var(--text2)">pending</span>';
+
+        html += `
+            <div class="hold-card">
+                <div class="hold-header">
+                    <span>${timeAgo(h.timestamp)}</span>
+                    <span>at ${price}</span>
+                    <span class="badge badge-hold">HOLD</span>
+                </div>
+                <div class="hold-details">
+                    <span>Reason: ${h.reason || 'agent_decision'}</span>
+                    <span>Signal ignored: ${signalText}</span>
+                    <span>Counterfactual: ${counterfactual}</span>
+                </div>
+            </div>`;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 // --- Portfolio Chart (now with all benchmark lines) ---

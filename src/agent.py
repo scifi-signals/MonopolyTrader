@@ -225,8 +225,13 @@ def make_decision(
     knowledge: dict = None,
     macro_gate: dict = None,
     regime: dict = None,
+    agent_config: dict = None,
 ) -> dict:
     """Call Claude to make a trading decision.
+
+    Args:
+        agent_config: Optional per-agent personality config (from ensemble).
+            If provided, appends the agent's system_prompt_addon.
 
     Returns the parsed decision dict with action, shares, hypothesis, etc.
     """
@@ -286,6 +291,12 @@ If BUY or SELL, specify how many shares (fractional OK, max trade = 20% of portf
 Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
 Respond with JSON only."""
 
+    # Build system prompt (with optional agent personality addon)
+    system_prompt = SYSTEM_PROMPT
+    if agent_config and agent_config.get("system_prompt_addon"):
+        agent_name = agent_config.get("display_name", agent_config.get("name", ""))
+        system_prompt += f"\n\nAGENT IDENTITY: {agent_name}\n{agent_config['system_prompt_addon']}"
+
     logger.info(f"Calling Claude for decision (prompt ~{len(user_prompt)} chars)")
 
     try:
@@ -293,7 +304,7 @@ Respond with JSON only."""
         response = client.messages.create(
             model=config["anthropic_model"],
             max_tokens=1500,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
 

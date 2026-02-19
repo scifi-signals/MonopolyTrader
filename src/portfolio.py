@@ -341,6 +341,48 @@ def calculate_position_size(
     return round(max_shares, 4)
 
 
+def apply_gap_risk_reduction(max_shares: float, config: dict = None) -> float:
+    """Reduce position size before known high-risk events (earnings, FOMC, etc.).
+
+    Returns the reduced max_shares. Checks for upcoming events that create
+    overnight gap risk.
+    """
+    if config is None:
+        config = load_config()
+
+    risk = config.get("risk_params", {})
+    reduction = risk.get("gap_risk_size_reduction_pct", 0.50)
+
+    # Check for known upcoming events that create gap risk
+    from .utils import load_json, KNOWLEDGE_DIR
+    earnings = load_json(KNOWLEDGE_DIR / "research" / "earnings_history.json", default={})
+
+    # If we have any indication of upcoming earnings within 48h, apply reduction
+    has_gap_risk = False
+    if earnings.get("upcoming_earnings"):
+        has_gap_risk = True
+
+    # Also check if VIX is elevated (>25) which indicates potential gap risk
+    # This is a softer trigger — reduce by half the gap reduction
+    try:
+        from .market_data import get_macro_data
+        macro = get_macro_data()
+        if macro.get("vix", 0) > 25:
+            # Apply partial reduction for elevated VIX
+            reduced = max_shares * (1 - reduction * 0.5)
+            logger.info(f"Elevated VIX gap risk: reducing position from {max_shares:.4f} to {reduced:.4f}")
+            return round(reduced, 4)
+    except Exception:
+        pass
+
+    if has_gap_risk:
+        reduced = max_shares * (1 - reduction)
+        logger.info(f"Gap risk reduction: {max_shares:.4f} -> {reduced:.4f} ({reduction*100:.0f}% reduction)")
+        return round(reduced, 4)
+
+    return max_shares
+
+
 def check_daily_loss_limit() -> bool:
     """Returns True if daily loss limit has been breached (should stop trading)."""
     config = load_config()

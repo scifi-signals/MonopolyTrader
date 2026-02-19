@@ -132,6 +132,20 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "recent": hold_log[-5:] if hold_log else [],
     }
 
+    # Ensemble data
+    ensemble_data = {}
+    try:
+        from .ensemble import list_agents, get_ensemble_summary
+        agents = list_agents()
+        if agents:
+            ensemble_data = {
+                "agents": get_ensemble_summary(),
+                "leaderboard": load_json(DATA_DIR / "ensemble" / "leaderboard.json", default={}),
+                "harmony": load_json(DATA_DIR / "ensemble" / "harmony_analysis.json", default={}),
+            }
+    except Exception as e:
+        logger.warning(f"Ensemble data load failed: {e}")
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -158,6 +172,7 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "knowledge_summary": get_knowledge_summary(),
         "market_open": is_market_open(),
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),
+        "ensemble": ensemble_data,
         "config": {
             "starting_balance": config["starting_balance"],
             "strategies_enabled": config["strategies_enabled"],

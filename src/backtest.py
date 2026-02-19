@@ -43,6 +43,7 @@ class WalkForwardBacktest:
         end: str = "2025-12-31",
         starting_balance: float = 1000.0,
         slippage_pct: float = 0.0005,
+        volatile_slippage_pct: float = 0.0015,
         max_position_pct: float = 0.65,
         max_risk_per_trade_pct: float = 0.02,
         atr_stop_multiplier: float = 2.5,
@@ -52,23 +53,45 @@ class WalkForwardBacktest:
         self.end = end
         self.starting_balance = starting_balance
         self.slippage_pct = slippage_pct
+        self.volatile_slippage_pct = volatile_slippage_pct
         self.max_position_pct = max_position_pct
         self.max_risk_per_trade_pct = max_risk_per_trade_pct
         self.atr_stop_multiplier = atr_stop_multiplier
         self.df = None
+        self.spy_df = None
+        self.vix_df = None
 
     def load_data(self):
-        """Download historical daily OHLCV data."""
+        """Download historical daily OHLCV data for TSLA, SPY, and VIX."""
         logger.info(f"Downloading {self.ticker} {self.start} to {self.end}...")
         stock = yf.Ticker(self.ticker)
         self.df = stock.history(start=self.start, end=self.end, interval="1d")
         if self.df.empty:
             raise ValueError(f"No data for {self.ticker} in range {self.start}-{self.end}")
-        logger.info(f"Loaded {len(self.df)} daily bars")
+        logger.info(f"Loaded {len(self.df)} daily bars for {self.ticker}")
+
+        # Download SPY for regime classification
+        logger.info("Downloading SPY data for regime classification...")
+        try:
+            self.spy_df = yf.Ticker("SPY").history(start=self.start, end=self.end, interval="1d")
+            logger.info(f"Loaded {len(self.spy_df)} daily bars for SPY")
+        except Exception as e:
+            logger.warning(f"SPY download failed: {e}")
+            self.spy_df = pd.DataFrame()
+
+        # Download VIX for volatility regime
+        logger.info("Downloading VIX data...")
+        try:
+            self.vix_df = yf.Ticker("^VIX").history(start=self.start, end=self.end, interval="1d")
+            logger.info(f"Loaded {len(self.vix_df)} daily bars for VIX")
+        except Exception as e:
+            logger.warning(f"VIX download failed: {e}")
+            self.vix_df = pd.DataFrame()
+
         return self.df
 
     def _simulate(self, signals: list[dict], name: str) -> BacktestResult:
-        """Walk through bars with pre-computed signals, apply ATR stops + slippage."""
+        """Walk through bars with pre-computed signals, apply ATR stops + VIX-aware slippage."""
         cash = self.starting_balance
         shares = 0.0
         entry_price = 0.0
@@ -82,11 +105,15 @@ class WalkForwardBacktest:
         for i, sig in enumerate(signals):
             price = sig["close"]
             atr = sig.get("atr", price * 0.03)
+            vix = sig.get("vix", 20)
             action = sig.get("action", "HOLD")
+
+            # VIX-aware slippage: volatile rate when VIX > 25
+            slippage = self.volatile_slippage_pct if vix > 25 else self.slippage_pct
 
             # Check stop loss first
             if shares > 0 and price <= stop_price:
-                sell_price = price * (1 - self.slippage_pct)
+                sell_price = price * (1 - slippage)
                 pnl = (sell_price - entry_price) * shares
                 cash += shares * sell_price
                 trades.append({"action": "SELL", "price": sell_price, "pnl": pnl, "reason": "stop_loss"})
@@ -94,7 +121,7 @@ class WalkForwardBacktest:
 
             # Execute signal
             if action == "BUY" and shares == 0 and cash > 0:
-                buy_price = price * (1 + self.slippage_pct)
+                buy_price = price * (1 + slippage)
                 stop_dist = atr * self.atr_stop_multiplier
                 risk_amount = (cash + shares * price) * self.max_risk_per_trade_pct
                 risk_shares = risk_amount / stop_dist if stop_dist > 0 else 0
@@ -111,7 +138,7 @@ class WalkForwardBacktest:
                     trades.append({"action": "BUY", "price": buy_price, "shares": buy_shares})
 
             elif action == "SELL" and shares > 0:
-                sell_price = price * (1 - self.slippage_pct)
+                sell_price = price * (1 - slippage)
                 pnl = (sell_price - entry_price) * shares
                 cash += shares * sell_price
                 trades.append({"action": "SELL", "price": sell_price, "pnl": pnl, "reason": "signal"})
@@ -156,19 +183,59 @@ class WalkForwardBacktest:
         )
 
     def _prepare_indicators(self) -> list[dict]:
-        """Pre-compute indicators for all bars."""
+        """Pre-compute indicators for all bars, including VIX and SPY regime."""
+        # Build VIX lookup by date
+        vix_lookup = {}
+        if self.vix_df is not None and not self.vix_df.empty:
+            for idx, row in self.vix_df.iterrows():
+                vix_lookup[str(idx.date())] = float(row["Close"])
+
+        # Build SPY regime lookup (50-day slope)
+        spy_lookup = {}
+        if self.spy_df is not None and not self.spy_df.empty:
+            spy_close = self.spy_df["Close"]
+            for i in range(50, len(self.spy_df)):
+                date_str = str(self.spy_df.index[i].date())
+                sma50 = float(spy_close.iloc[i - 49:i + 1].mean())
+                current = float(spy_close.iloc[i])
+                prev = float(spy_close.iloc[i - 1]) if i > 0 else current
+                spy_lookup[date_str] = {
+                    "spy_daily_change": (current - prev) / prev if prev > 0 else 0,
+                    "spy_trend": "bull" if current > sma50 else "bear",
+                }
+
         bars = []
         for i in range(50, len(self.df)):
             window = self.df.iloc[max(0, i - 100):i + 1]
             ind = calculate_indicators(window)
             row = self.df.iloc[i]
+            date_str = str(self.df.index[i].date())
+
+            # Add VIX
+            vix = vix_lookup.get(date_str, 20.0)
+
+            # Add SPY regime
+            spy = spy_lookup.get(date_str, {"spy_daily_change": 0, "spy_trend": "sideways"})
+
+            # Classify regime: trend from SPY slope, volatility from VIX
+            if vix < 20:
+                vol_regime = "low"
+            elif vix < 30:
+                vol_regime = "normal"
+            else:
+                vol_regime = "high"
+
             bars.append({
-                "date": str(self.df.index[i].date()),
+                "date": date_str,
                 "close": float(row["Close"]),
                 "open": float(row["Open"]),
                 "high": float(row["High"]),
                 "low": float(row["Low"]),
                 "volume": int(row["Volume"]),
+                "vix": vix,
+                "spy_trend": spy["spy_trend"],
+                "spy_daily_change": spy["spy_daily_change"],
+                "vol_regime": vol_regime,
                 **ind,
             })
         return bars
@@ -219,6 +286,46 @@ class WalkForwardBacktest:
                 action = "SELL"
             signals.append({**b, "action": action})
         return self._simulate(signals, "technical_macd")
+
+    def run_sentiment_proxy_strategy(self, bars: list[dict]) -> BacktestResult:
+        """Sentiment proxy using volume + price patterns (no LLM needed in backtest).
+        Buy on volume breakouts with positive close; sell on volume spikes with negative close."""
+        signals = []
+        for i, b in enumerate(bars):
+            action = "HOLD"
+            vol = b.get("volume", 0)
+            vol_sma = b.get("volume_sma_20")
+            close = b["close"]
+            open_p = b["open"]
+            rsi = b.get("rsi_14")
+
+            if vol_sma and vol_sma > 0:
+                vol_ratio = vol / vol_sma
+
+                # High volume + positive close = bullish sentiment proxy
+                if vol_ratio > 1.5 and close > open_p and (rsi is None or rsi < 70):
+                    action = "BUY"
+                # High volume + negative close = bearish sentiment proxy
+                elif vol_ratio > 1.5 and close < open_p and (rsi is None or rsi > 30):
+                    action = "SELL"
+                # Gap up with follow-through
+                elif i > 0 and close > bars[i - 1]["close"] * 1.02 and close > open_p:
+                    action = "BUY"
+                # Gap down with follow-through
+                elif i > 0 and close < bars[i - 1]["close"] * 0.98 and close < open_p:
+                    action = "SELL"
+
+            signals.append({**b, "action": action})
+        return self._simulate(signals, "sentiment_proxy")
+
+    def run_dca_strategy(self, bars: list[dict]) -> BacktestResult:
+        """DCA as a strategy through the simulation engine — buys every 5 bars (weekly)."""
+        signals = []
+        for i, b in enumerate(bars):
+            # Buy every ~5 bars (approximately weekly)
+            action = "BUY" if i % 5 == 0 else "HOLD"
+            signals.append({**b, "action": action})
+        return self._simulate(signals, "dca")
 
     def run_buy_and_hold(self) -> BacktestResult:
         """Buy on day 1, hold forever."""
@@ -311,11 +418,13 @@ class WalkForwardBacktest:
         bars = self._prepare_indicators()
         logger.info(f"Prepared {len(bars)} bars with indicators")
 
-        # Run strategies
+        # Run strategies (all 5)
         logger.info("Running strategies...")
         momentum = self.run_momentum_strategy(bars)
         mean_rev = self.run_mean_reversion_strategy(bars)
         technical = self.run_technical_strategy(bars)
+        sentiment = self.run_sentiment_proxy_strategy(bars)
+        dca_strat = self.run_dca_strategy(bars)
 
         # Benchmarks
         logger.info("Running benchmarks...")
@@ -331,7 +440,7 @@ class WalkForwardBacktest:
         random_p75 = np.percentile(random_returns, 75)
 
         # Results
-        strategies = [momentum, mean_rev, technical]
+        strategies = [momentum, mean_rev, technical, sentiment, dca_strat]
         benchmarks = [buy_hold, dca]
         all_results = strategies + benchmarks
 

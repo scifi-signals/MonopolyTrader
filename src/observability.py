@@ -315,10 +315,13 @@ class HealthChecker:
             import os
             has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
             if not has_key:
-                for path in ["anthropic_api_key.txt", "../anthropic_api_key.txt"]:
-                    if Path(path).exists():
-                        has_key = True
-                        break
+                for path in ["anthropic_api_key.txt", "../anthropic_api_key.txt", ".env"]:
+                    p = Path(path)
+                    if p.exists():
+                        content = p.read_text()
+                        if "ANTHROPIC_API_KEY" in content:
+                            has_key = True
+                            break
             components["claude_api"] = {
                 "healthy": has_key,
                 "detail": "API key found" if has_key else "No API key",

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-19T01:08:14.944249+00:00",
+  "generated_at": "2026-02-19T02:09:30.243308+00:00",
   "ticker": "TSLA",
   "current_price": {
     "price": 411.2,
@@ -178,7 +178,7 @@
   },
   "verdict": "too_early",
   "health": {
-    "timestamp": "2026-02-19T01:08:14.943347+00:00",
+    "timestamp": "2026-02-19T02:09:30.232370+00:00",
     "overall": false,
     "components": {
       "market_data": {
@@ -306,7 +306,7 @@
   },
   "weight_history": [
     {
-      "timestamp": "2026-02-19T01:08:14.674225+00:00",
+      "timestamp": "2026-02-19T02:09:30.184022+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -316,7 +316,7 @@
       }
     },
     {
-      "timestamp": "2026-02-19T01:08:14.674247+00:00",
+      "timestamp": "2026-02-19T02:09:30.184037+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -352,7 +352,79 @@
   },
   "knowledge_summary": "MonopolyTrader has 0 lessons and 0 patterns.",
   "market_open": false,
-  "time_et": "2026-02-18 20:08 ET",
+  "time_et": "2026-02-18 21:09 ET",
+  "ensemble": {
+    "agents": {
+      "alpha": {
+        "display_name": "Alpha \u2014 The Technician",
+        "description": "Pure technical analysis. No sentiment, no BSM. Proves whether charts alone have edge.",
+        "total_value": 1000.0,
+        "total_pnl": 0.0,
+        "total_pnl_pct": 0.0,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "realized_pnl": 0,
+        "cash": 1000.0,
+        "holdings": {
+          "TSLA": {
+            "shares": 0.0,
+            "avg_cost_basis": 0.0,
+            "current_price": 0.0,
+            "unrealized_pnl": 0.0
+          }
+        },
+        "last_updated": "2026-02-19T02:09:30.241414+00:00",
+        "learning_enabled": false
+      },
+      "bravo": {
+        "display_name": "Bravo \u2014 The Insider",
+        "description": "Sentiment and BSM focused. Weights news, social signals, and billionaire moves heavily.",
+        "total_value": 1000.0,
+        "total_pnl": 0.0,
+        "total_pnl_pct": 0.0,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "realized_pnl": 0,
+        "cash": 1000.0,
+        "holdings": {
+          "TSLA": {
+            "shares": 0.0,
+            "avg_cost_basis": 0.0,
+            "current_price": 0.0,
+            "unrealized_pnl": 0.0
+          }
+        },
+        "last_updated": "2026-02-19T02:09:30.242178+00:00",
+        "learning_enabled": true
+      },
+      "echo": {
+        "display_name": "Echo \u2014 The Generalist",
+        "description": "Balanced learner that adapts weights over time. The control agent that should improve.",
+        "total_value": 1000.0,
+        "total_pnl": 0.0,
+        "total_pnl_pct": 0.0,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "realized_pnl": 0,
+        "cash": 1000.0,
+        "holdings": {
+          "TSLA": {
+            "shares": 0.0,
+            "avg_cost_basis": 0.0,
+            "current_price": 0.0,
+            "unrealized_pnl": 0.0
+          }
+        },
+        "last_updated": "2026-02-19T02:09:30.242789+00:00",
+        "learning_enabled": true
+      }
+    },
+    "leaderboard": {},
+    "harmony": {}
+  },
   "config": {
     "starting_balance": 1000.0,
     "strategies_enabled": [

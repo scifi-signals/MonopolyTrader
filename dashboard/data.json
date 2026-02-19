@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-02-18T21:00:16.280188+00:00",
+  "generated_at": "2026-02-19T01:08:14.944249+00:00",
   "ticker": "TSLA",
   "current_price": {
     "price": 411.2,
     "open": 411.41,
     "high": 411.58,
     "low": 411.2,
-    "volume": 0,
+    "volume": 428756,
     "change": -0.21,
     "change_pct": -0.05,
     "timestamp": "2026-02-18 15:59:00-05:00"
@@ -80,6 +80,131 @@
       "value": 1000.0
     }
   ],
+  "benchmarks_comparison": {
+    "agent": {
+      "value": 1000.0,
+      "return_pct": 0.0
+    },
+    "buy_hold_tsla": {
+      "value": 1000.0,
+      "return_pct": 0.0
+    },
+    "buy_hold_spy": {
+      "value": 1000.0,
+      "return_pct": 0.0
+    },
+    "dca_tsla": {
+      "value": 1000.0,
+      "return_pct": 0.0
+    },
+    "random_median": {
+      "value": 1000.0,
+      "return_pct": 0.0
+    },
+    "alpha_vs_tsla": 0.0,
+    "alpha_vs_spy": 0.0,
+    "percentile_vs_random": 50.0,
+    "beats_buy_hold_tsla": false,
+    "beats_buy_hold_spy": false,
+    "beats_dca": false,
+    "beats_random_median": false
+  },
+  "graduation_criteria": {
+    "criteria": {
+      "min_trading_days": {
+        "required": 90,
+        "actual": 1,
+        "passed": false
+      },
+      "min_trades": {
+        "required": 50,
+        "actual": 1,
+        "passed": false
+      },
+      "percentile_vs_random": {
+        "required": 75,
+        "actual": 50.0,
+        "passed": false
+      },
+      "sharpe_ratio": {
+        "required": 0.5,
+        "actual": 0,
+        "passed": false
+      },
+      "max_drawdown": {
+        "required": 15,
+        "actual": 0,
+        "passed": true
+      },
+      "prediction_accuracy": {
+        "required": 55,
+        "actual": 0,
+        "passed": false
+      },
+      "beats_buy_hold_tsla": {
+        "required": true,
+        "actual": false,
+        "passed": false
+      },
+      "beats_buy_hold_spy": {
+        "required": true,
+        "actual": false,
+        "passed": false
+      },
+      "beats_dca": {
+        "required": true,
+        "actual": false,
+        "passed": false
+      },
+      "beats_random_median": {
+        "required": true,
+        "actual": false,
+        "passed": false
+      },
+      "regime_diversity": {
+        "required": 2,
+        "actual": 0,
+        "passed": false
+      },
+      "positive_return": {
+        "required": 0,
+        "actual": 0.0,
+        "passed": false
+      }
+    },
+    "passed": 1,
+    "total": 12,
+    "all_passed": false
+  },
+  "verdict": "too_early",
+  "health": {
+    "timestamp": "2026-02-19T01:08:14.943347+00:00",
+    "overall": false,
+    "components": {
+      "market_data": {
+        "healthy": true,
+        "detail": "TSLA: $411.2"
+      },
+      "portfolio": {
+        "healthy": true,
+        "detail": "Value: $1000.00"
+      },
+      "knowledge_base": {
+        "healthy": true,
+        "detail": "0 lessons, 0 patterns"
+      },
+      "claude_api": {
+        "healthy": false,
+        "detail": "No API key"
+      }
+    }
+  },
+  "active_alerts": [],
+  "milestones": [],
+  "hold_log_summary": {
+    "total_holds": 0,
+    "recent": []
+  },
   "lessons": [],
   "patterns": [],
   "predictions": [
@@ -181,7 +306,7 @@
   },
   "weight_history": [
     {
-      "timestamp": "2026-02-18T21:00:16.280174+00:00",
+      "timestamp": "2026-02-19T01:08:14.674225+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -191,7 +316,7 @@
       }
     },
     {
-      "timestamp": "2026-02-18T21:00:16.280181+00:00",
+      "timestamp": "2026-02-19T01:08:14.674247+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -226,6 +351,8 @@
     "seasonal_notes": []
   },
   "knowledge_summary": "MonopolyTrader has 0 lessons and 0 patterns.",
+  "market_open": false,
+  "time_et": "2026-02-18 20:08 ET",
   "config": {
     "starting_balance": 1000.0,
     "strategies_enabled": [
@@ -236,13 +363,38 @@
       "dca"
     ],
     "risk_params": {
-      "max_position_pct": 0.9,
-      "max_single_trade_pct": 0.25,
-      "stop_loss_pct": 0.05,
+      "max_position_pct": 0.65,
+      "max_single_trade_pct": 0.2,
+      "stop_loss_method": "dynamic_atr",
+      "stop_loss_atr_multipliers": {
+        "low_vix": 2.0,
+        "normal_vix": 2.5,
+        "high_vix": 3.0,
+        "vix_thresholds": [
+          20,
+          30
+        ]
+      },
+      "position_sizing_method": "inverse_atr",
+      "max_risk_per_trade_pct": 0.02,
       "enable_fractional_shares": true,
-      "min_cash_reserve_pct": 0.1,
+      "min_cash_reserve_pct": 0.15,
       "cooldown_minutes": 15,
-      "daily_loss_limit_pct": 0.08
+      "daily_loss_limit_pct": 0.08,
+      "slippage_per_side_pct": 0.0005,
+      "slippage_volatile_per_side_pct": 0.0015,
+      "earnings_blackout_hours": 48,
+      "macro_gate": {
+        "spy_daily_drop_threshold": -0.02,
+        "vix_threshold": 30,
+        "elevated_confidence_required": 0.8
+      },
+      "kill_switches": {
+        "negative_accuracy_trend_days": 30,
+        "max_drawdown_from_peak_pct": 0.15,
+        "critical_alerts_in_7_days": 3,
+        "style_drift_winrate_drop_pct": 0.3
+      }
     }
   }
 }

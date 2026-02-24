@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MonopolyTrader v3 Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
@@ -42,6 +42,30 @@
                 <div id="benchmark-detail" class="benchmark-detail"></div>
             </div>
 
+            <!-- Agent's Mind -->
+            <div id="agent-mind-section" class="card agent-mind-card" style="display:none">
+                <div class="agent-mind-accent"></div>
+                <div class="agent-mind-header">
+                    <h2>Agent's Mind</h2>
+                    <span id="agent-mind-time" class="agent-mind-time"></span>
+                </div>
+
+                <!-- Decision Banner -->
+                <div id="agent-mind-decision" class="agent-mind-decision"></div>
+
+                <!-- Reasoning -->
+                <div id="agent-mind-reasoning" class="agent-mind-reasoning"></div>
+
+                <!-- Signal Breakdown -->
+                <div id="agent-mind-signals" class="agent-mind-signals"></div>
+
+                <!-- Regime Chips -->
+                <div id="agent-mind-regime" class="agent-mind-regime"></div>
+
+                <!-- Hold Analysis (conditional) -->
+                <div id="agent-mind-hold" class="agent-mind-hold-box" style="display:none"></div>
+            </div>
+
             <!-- Graduation Progress -->
             <div class="card">
                 <h2>Graduation Progress</h2>
@@ -53,6 +77,37 @@
                 <h2>Portfolio Value vs Benchmarks</h2>
                 <div class="chart-container">
                     <canvas id="portfolio-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Performance Analytics -->
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Portfolio Drawdown</h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="drawdown-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Rolling Sharpe Ratio <span class="chart-subtitle">20-day, annualized</span></h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="sharpe-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Prediction Accuracy Trend</h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="accuracy-trend-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Agent vs Random Traders</h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="random-dist-chart"></canvas>
+                    </div>
                 </div>
             </div>
 

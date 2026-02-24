@@ -1,5 +1,6 @@
 """Dashboard reporter — generates JSON data and HTML dashboard."""
 
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -109,6 +110,11 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"Benchmark comparison failed: {e}")
 
+    # Performance analytics (diagnostic charts)
+    performance_analytics = _build_performance_analytics(
+        snapshots, predictions, benchmarks_comparison
+    )
+
     # Health & alerts
     health = {}
     active_alerts = []
@@ -156,10 +162,14 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"Ensemble data load failed: {e}")
 
+    # Latest decision cycle for Agent's Mind card
+    latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default=None)
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
         "current_price": current,
+        "latest_cycle": latest_cycle,
         "portfolio": summary,
         "transactions": transactions,
         "snapshots": snapshots,
@@ -184,6 +194,7 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),
         "ensemble": ensemble_data,
         "api_costs": cost_summary,
+        "performance_analytics": performance_analytics,
         "config": {
             "starting_balance": config["starting_balance"],
             "strategies_enabled": config["strategies_enabled"],
@@ -299,6 +310,105 @@ def _calculate_counterfactual_stats(hold_log: list) -> dict:
         "missed_gains": missed_gains,
         "total_missed_pnl": round(total_missed_pnl, 2),
         "correct_hold_pct": round(correct_holds / len(scored) * 100, 1) if scored else 0,
+    }
+
+
+def _build_performance_analytics(snapshots: list, predictions: list, benchmarks_comparison: dict) -> dict:
+    """Compute diagnostic analytics for the dashboard charts."""
+
+    # --- Drawdown series ---
+    drawdown_series = []
+    peak = 0.0
+    for snap in snapshots:
+        val = snap.get("total_value", 0)
+        if val > peak:
+            peak = val
+        dd_pct = ((val - peak) / peak * 100) if peak > 0 else 0.0
+        drawdown_series.append({
+            "date": snap.get("date", ""),
+            "drawdown_pct": round(dd_pct, 2),
+            "peak": round(peak, 2),
+        })
+
+    # --- Rolling Sharpe (20-day window, annualized) ---
+    rolling_sharpe = []
+    if len(snapshots) >= 2:
+        # Compute daily returns
+        values = [s.get("total_value", 0) for s in snapshots]
+        daily_returns = []
+        for i in range(1, len(values)):
+            if values[i - 1] > 0:
+                daily_returns.append((values[i] - values[i - 1]) / values[i - 1])
+            else:
+                daily_returns.append(0.0)
+
+        window = 20
+        for i in range(window - 1, len(daily_returns)):
+            w = daily_returns[i - window + 1 : i + 1]
+            mean_r = sum(w) / len(w)
+            var_r = sum((r - mean_r) ** 2 for r in w) / len(w)
+            std_r = math.sqrt(var_r) if var_r > 0 else 0
+            sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
+            # i in daily_returns corresponds to snapshots[i+1]
+            rolling_sharpe.append({
+                "date": snapshots[i + 1].get("date", ""),
+                "sharpe": round(sharpe, 2),
+            })
+
+    # --- Prediction accuracy trend (rolling window of 10 scored predictions) ---
+    accuracy_trend = []
+    scored = []
+    for p in predictions:
+        outcomes = p.get("outcomes", {})
+        has_score = False
+        for h in ["30min", "2hr", "1day"]:
+            o = outcomes.get(h)
+            if o and o.get("direction_correct") is not None:
+                has_score = True
+                break
+        if has_score:
+            scored.append(p)
+
+    trend_window = 10
+    for i in range(len(scored)):
+        window_preds = scored[max(0, i - trend_window + 1) : i + 1]
+        point = {
+            "timestamp": scored[i].get("timestamp", ""),
+            "window": len(window_preds),
+        }
+        for h in ["30min", "2hr", "1day"]:
+            correct = 0
+            total = 0
+            for wp in window_preds:
+                o = wp.get("outcomes", {}).get(h)
+                if o and o.get("direction_correct") is not None:
+                    total += 1
+                    if o["direction_correct"]:
+                        correct += 1
+            key = f"accuracy_{h}"
+            point[key] = round(correct / total * 100, 1) if total > 0 else None
+        accuracy_trend.append(point)
+
+    # --- Random trader results ---
+    random_results = []
+    agent_value = 0.0
+    try:
+        from .benchmarks import BenchmarkTracker
+        bt = BenchmarkTracker()
+        random_results = bt.data.get("random_traders", {}).get("results", [])
+    except Exception:
+        pass
+    if benchmarks_comparison.get("agent"):
+        agent_value = benchmarks_comparison["agent"].get("value", 0)
+    elif snapshots:
+        agent_value = snapshots[-1].get("total_value", 0)
+
+    return {
+        "drawdown_series": drawdown_series,
+        "rolling_sharpe": rolling_sharpe,
+        "prediction_accuracy_trend": accuracy_trend,
+        "random_trader_results": random_results,
+        "agent_value": round(agent_value, 2),
     }
 
 

@@ -11,7 +11,7 @@ from datetime import datetime
 from .utils import (
     load_config, is_market_open, now_et, iso_now,
     format_currency, format_pct, setup_logging, DATA_DIR,
-    load_json,
+    load_json, save_json,
 )
 from .market_data import get_current_price, get_market_summary, check_macro_gate, classify_regime
 from .portfolio import (
@@ -184,6 +184,12 @@ def run_cycle():
             logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:100]}")
             _log_hold_decision(decision, market_data, signals, "agent_decision")
 
+        # 14b. Save latest cycle for Agent's Mind dashboard card
+        try:
+            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
+        except Exception as e:
+            logger.warning(f"Failed to save latest cycle: {e}")
+
         # 15. Score pending predictions
         scored = review_predictions(current_price)
         if scored:
@@ -241,6 +247,48 @@ def _save_research_request(topic: str):
     requests = load_json(path, default=[])
     requests.append({"topic": topic, "requested_at": iso_now()})
     save_json(path, requests)
+
+
+def _save_latest_cycle(decision: dict, signals, aggregate, market_data: dict, regime: dict):
+    """Save the latest decision cycle data for the Agent's Mind dashboard card."""
+    signal_balance = calculate_signal_balance(signals) if signals else None
+
+    strategy_signals = []
+    for s in (signals or []):
+        strategy_signals.append({
+            "strategy": s.strategy,
+            "action": s.action,
+            "confidence": s.confidence,
+            "weight": s.weight,
+            "reasoning": s.reasoning,
+        })
+
+    cycle_data = {
+        "timestamp": iso_now(),
+        "action": decision.get("action", "HOLD"),
+        "confidence": decision.get("confidence", 0),
+        "strategy": decision.get("strategy", ""),
+        "hypothesis": decision.get("hypothesis", ""),
+        "reasoning": decision.get("reasoning", ""),
+        "price": market_data.get("current", {}).get("price", 0),
+        "ticker": market_data.get("ticker", "TSLA"),
+        "aggregate_signal": {
+            "action": aggregate.action if aggregate else "HOLD",
+            "confidence": aggregate.confidence if aggregate else 0,
+        },
+        "strategy_signals": strategy_signals,
+        "signal_balance": signal_balance,
+        "regime": {
+            "trend": regime.get("trend", "unknown"),
+            "volatility": regime.get("volatility", "unknown"),
+            "vix": regime.get("vix", 0),
+        },
+        "hold_analysis": decision.get("hold_analysis"),
+        "predictions": decision.get("predictions"),
+        "knowledge_applied": decision.get("knowledge_applied", []),
+    }
+
+    save_json(DATA_DIR / "latest_cycle.json", cycle_data)
 
 
 def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
@@ -684,6 +732,12 @@ def run_once():
                 print(f"\nREJECTED: {result.get('reason', 'unknown')}")
         else:
             print(f"\nHOLD: {decision.get('reasoning', 'N/A')[:150]}")
+
+        # Save latest cycle for Agent's Mind dashboard card
+        try:
+            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
+        except Exception as e:
+            logger.warning(f"Failed to save latest cycle: {e}")
 
         review_predictions(current_price)
 

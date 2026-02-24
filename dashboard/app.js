@@ -44,8 +44,13 @@ function render() {
     renderStatusBanner();
     renderMilestones();
     renderBenchmarkComparison();
+    renderAgentMind();
     renderGraduationChecklist();
     renderPortfolioChart();
+    renderDrawdownChart();
+    renderSharpeChart();
+    renderAccuracyTrendChart();
+    renderRandomDistChart();
     renderHealthStatus();
     renderEnsembleLeaderboard();
     renderHoldLog();
@@ -98,6 +103,127 @@ function renderStatusBanner() {
         <span class="status-text">${label}</span>
         <span class="status-time">${detail}</span>
     `;
+}
+
+// --- Agent's Mind ---
+
+function renderAgentMind() {
+    const cycle = DATA.latest_cycle;
+    const section = document.getElementById('agent-mind-section');
+
+    if (!cycle) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+
+    // Timestamp
+    document.getElementById('agent-mind-time').textContent = timeAgo(cycle.timestamp);
+
+    // Decision banner: action badge + confidence ring + strategy + price
+    const action = cycle.action || 'HOLD';
+    const conf = cycle.confidence || 0;
+    const confPct = (conf * 100).toFixed(0);
+    const actionCls = action === 'BUY' ? 'am-buy' : action === 'SELL' ? 'am-sell' : 'am-hold';
+    const confDeg = Math.round(conf * 360);
+    const confColor = action === 'BUY' ? 'var(--green)' : action === 'SELL' ? 'var(--red)' : 'var(--text2)';
+    const strategy = cycle.strategy || cycle.aggregate_signal?.action || '';
+    const price = cycle.price ? fmt(cycle.price) : '';
+
+    document.getElementById('agent-mind-decision').innerHTML = `
+        <div class="am-decision-row">
+            <div class="am-action-badge ${actionCls}">${action}</div>
+            <div class="am-conf-ring" style="background: conic-gradient(${confColor} ${confDeg}deg, var(--surface2) ${confDeg}deg)">
+                <div class="am-conf-inner">${confPct}%</div>
+            </div>
+            <div class="am-decision-meta">
+                ${strategy ? `<div class="am-strategy">${strategy}</div>` : ''}
+                ${price ? `<div class="am-price">${cycle.ticker || 'TSLA'} at ${price}</div>` : ''}
+            </div>
+        </div>
+    `;
+
+    // Reasoning (full text, serif font)
+    const hypothesis = cycle.hypothesis || '';
+    const reasoning = cycle.reasoning || '';
+    const reasoningEl = document.getElementById('agent-mind-reasoning');
+    if (hypothesis || reasoning) {
+        let html = '';
+        if (hypothesis) html += `<div class="am-hypothesis">${hypothesis}</div>`;
+        if (reasoning && reasoning !== hypothesis) html += `<div class="am-reasoning-text">${reasoning}</div>`;
+        reasoningEl.innerHTML = html;
+        reasoningEl.style.display = 'block';
+    } else {
+        reasoningEl.style.display = 'none';
+    }
+
+    // Signal breakdown: 5 rows with colored dot + name + vote + confidence bar + weight
+    const signals = cycle.strategy_signals || [];
+    const signalsEl = document.getElementById('agent-mind-signals');
+    if (signals.length > 0) {
+        const stratColors = {
+            momentum: '#3b82f6', mean_reversion: '#22c55e', sentiment: '#f59e0b',
+            technical_signals: '#a855f7', dca: '#06b6d4'
+        };
+
+        signalsEl.innerHTML = `
+            <div class="am-signals-header">Strategy Signals</div>
+            ${signals.map(s => {
+                const color = stratColors[s.strategy] || '#6366f1';
+                const voteCls = s.action === 'BUY' ? 'am-vote-buy' : s.action === 'SELL' ? 'am-vote-sell' : 'am-vote-hold';
+                const barWidth = Math.max(s.confidence * 100, 3);
+                const weightPct = (s.weight * 100).toFixed(0);
+                return `
+                    <div class="am-signal-row">
+                        <span class="am-signal-dot" style="background:${color}"></span>
+                        <span class="am-signal-name">${s.strategy.replace('_', ' ')}</span>
+                        <span class="am-signal-vote ${voteCls}">${s.action}</span>
+                        <div class="am-signal-bar-track">
+                            <div class="am-signal-bar" style="width:${barWidth}%;background:${color}"></div>
+                        </div>
+                        <span class="am-signal-weight">${weightPct}%</span>
+                    </div>`;
+            }).join('')}
+        `;
+        signalsEl.style.display = 'block';
+    } else {
+        signalsEl.style.display = 'none';
+    }
+
+    // Regime chips
+    const regime = cycle.regime || {};
+    const regimeEl = document.getElementById('agent-mind-regime');
+    if (regime.trend || regime.volatility || regime.vix) {
+        const trendColors = { bullish: 'var(--green)', bearish: 'var(--red)', neutral: 'var(--text2)', sideways: 'var(--orange)' };
+        const volColors = { low: 'var(--green)', normal: 'var(--text2)', high: 'var(--orange)', extreme: 'var(--red)' };
+        const trendColor = trendColors[regime.trend] || 'var(--text2)';
+        const volColor = volColors[regime.volatility] || 'var(--text2)';
+        const vixVal = regime.vix ? regime.vix.toFixed(1) : '?';
+        const vixColor = regime.vix > 30 ? 'var(--red)' : regime.vix > 20 ? 'var(--orange)' : 'var(--text2)';
+
+        regimeEl.innerHTML = `
+            <span class="am-regime-chip" style="color:${trendColor};border-color:${trendColor}">Trend: ${regime.trend || '?'}</span>
+            <span class="am-regime-chip" style="color:${volColor};border-color:${volColor}">Vol: ${regime.volatility || '?'}</span>
+            <span class="am-regime-chip" style="color:${vixColor};border-color:${vixColor}">VIX: ${vixVal}</span>
+        `;
+        regimeEl.style.display = 'flex';
+    } else {
+        regimeEl.style.display = 'none';
+    }
+
+    // Hold analysis (conditional)
+    const ha = cycle.hold_analysis;
+    const holdEl = document.getElementById('agent-mind-hold');
+    if (ha && typeof ha === 'object' && cycle.action === 'HOLD') {
+        let haHtml = '<div class="am-hold-title">Hold Analysis</div>';
+        if (ha.opportunity_cost) haHtml += `<div class="am-hold-item"><strong>Opportunity cost:</strong> ${ha.opportunity_cost}</div>`;
+        if (ha.downside_protection) haHtml += `<div class="am-hold-item"><strong>Downside protection:</strong> ${ha.downside_protection}</div>`;
+        if (ha.decision_boundary) haHtml += `<div class="am-hold-item"><strong>Decision boundary:</strong> ${ha.decision_boundary}</div>`;
+        holdEl.innerHTML = haHtml;
+        holdEl.style.display = 'block';
+    } else {
+        holdEl.style.display = 'none';
+    }
 }
 
 // --- NEW: Benchmark Comparison ---
@@ -503,6 +629,358 @@ function renderPortfolioChart() {
                 }
             }
         }
+    });
+}
+
+// --- Performance Analytics Charts ---
+
+function renderDrawdownChart() {
+    const ctx = document.getElementById('drawdown-chart').getContext('2d');
+    const analytics = DATA.performance_analytics || {};
+    const series = analytics.drawdown_series || [];
+
+    if (series.length < 2) {
+        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">Not enough data yet</p>';
+        return;
+    }
+
+    const labels = series.map(s => s.date);
+    const values = series.map(s => s.drawdown_pct);
+
+    if (charts.drawdown) charts.drawdown.destroy();
+    charts.drawdown = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Drawdown %',
+                data: values,
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                fill: true,
+                tension: 0.3,
+                borderWidth: 2,
+                pointRadius: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                annotation: undefined,
+            },
+            scales: {
+                x: { ticks: { color: '#8b90a5', font: { size: 10 } }, grid: { color: '#2d3148' } },
+                y: {
+                    ticks: {
+                        color: '#8b90a5', font: { size: 10 },
+                        callback: v => v.toFixed(0) + '%'
+                    },
+                    grid: { color: '#2d3148' },
+                    max: 1,
+                }
+            }
+        },
+        plugins: [{
+            id: 'drawdownLines',
+            afterDraw(chart) {
+                const { ctx: c, chartArea, scales } = chart;
+                const yScale = scales.y;
+                const lines = [
+                    { val: 0, color: '#8b90a5', dash: [] },
+                    { val: -8, color: '#f59e0b', dash: [5, 5] },
+                    { val: -15, color: '#ef4444', dash: [5, 5] },
+                ];
+                lines.forEach(line => {
+                    const y = yScale.getPixelForValue(line.val);
+                    if (y >= chartArea.top && y <= chartArea.bottom) {
+                        c.save();
+                        c.beginPath();
+                        c.setLineDash(line.dash);
+                        c.strokeStyle = line.color;
+                        c.lineWidth = 1;
+                        c.moveTo(chartArea.left, y);
+                        c.lineTo(chartArea.right, y);
+                        c.stroke();
+                        c.restore();
+                    }
+                });
+            }
+        }]
+    });
+}
+
+function renderSharpeChart() {
+    const ctx = document.getElementById('sharpe-chart').getContext('2d');
+    const analytics = DATA.performance_analytics || {};
+    const series = analytics.rolling_sharpe || [];
+
+    if (series.length === 0) {
+        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">Need 20+ trading days</p>';
+        return;
+    }
+
+    const labels = series.map(s => s.date);
+    const values = series.map(s => s.sharpe);
+
+    if (charts.sharpe) charts.sharpe.destroy();
+    charts.sharpe = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Sharpe Ratio',
+                data: values,
+                borderColor: '#6366f1',
+                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                fill: false,
+                tension: 0.3,
+                borderWidth: 2,
+                pointRadius: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+            },
+            scales: {
+                x: { ticks: { color: '#8b90a5', font: { size: 10 } }, grid: { color: '#2d3148' } },
+                y: {
+                    ticks: {
+                        color: '#8b90a5', font: { size: 10 },
+                        callback: v => v.toFixed(1)
+                    },
+                    grid: { color: '#2d3148' },
+                }
+            }
+        },
+        plugins: [{
+            id: 'sharpeZones',
+            afterDraw(chart) {
+                const { ctx: c, chartArea, scales } = chart;
+                const yScale = scales.y;
+                // Green zone above 0.5
+                const y05 = yScale.getPixelForValue(0.5);
+                if (y05 > chartArea.top) {
+                    c.save();
+                    c.fillStyle = 'rgba(34, 197, 94, 0.06)';
+                    c.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, Math.min(y05, chartArea.bottom) - chartArea.top);
+                    c.restore();
+                }
+                // Red zone below 0
+                const y0 = yScale.getPixelForValue(0);
+                if (y0 < chartArea.bottom) {
+                    c.save();
+                    c.fillStyle = 'rgba(239, 68, 68, 0.06)';
+                    c.fillRect(chartArea.left, Math.max(y0, chartArea.top), chartArea.right - chartArea.left, chartArea.bottom - Math.max(y0, chartArea.top));
+                    c.restore();
+                }
+                // Reference lines
+                [{ val: 0.5, color: '#22c55e' }, { val: 0, color: '#ef4444' }].forEach(line => {
+                    const y = yScale.getPixelForValue(line.val);
+                    if (y >= chartArea.top && y <= chartArea.bottom) {
+                        c.save();
+                        c.beginPath();
+                        c.setLineDash([4, 4]);
+                        c.strokeStyle = line.color;
+                        c.lineWidth = 1;
+                        c.moveTo(chartArea.left, y);
+                        c.lineTo(chartArea.right, y);
+                        c.stroke();
+                        c.restore();
+                    }
+                });
+            }
+        }]
+    });
+}
+
+function renderAccuracyTrendChart() {
+    const ctx = document.getElementById('accuracy-trend-chart').getContext('2d');
+    const analytics = DATA.performance_analytics || {};
+    const series = analytics.prediction_accuracy_trend || [];
+
+    if (series.length === 0) {
+        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">No scored predictions yet</p>';
+        return;
+    }
+
+    const labels = series.map(s => {
+        const d = new Date(s.timestamp);
+        return (d.getMonth() + 1) + '/' + d.getDate();
+    });
+
+    const horizons = [
+        { key: 'accuracy_30min', label: '30min', color: '#3b82f6' },
+        { key: 'accuracy_2hr', label: '2hr', color: '#22c55e' },
+        { key: 'accuracy_1day', label: '1day', color: '#f59e0b' },
+    ];
+
+    const datasets = horizons.map(h => ({
+        label: h.label,
+        data: series.map(s => s[h.key]),
+        borderColor: h.color,
+        backgroundColor: h.color + '20',
+        fill: false,
+        tension: 0.3,
+        borderWidth: 2,
+        pointRadius: 2,
+        spanGaps: true,
+    }));
+
+    if (charts.accuracyTrend) charts.accuracyTrend.destroy();
+    charts.accuracyTrend = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#8b90a5', font: { size: 10 } } },
+            },
+            scales: {
+                x: { ticks: { color: '#8b90a5', font: { size: 10 } }, grid: { color: '#2d3148' } },
+                y: {
+                    ticks: {
+                        color: '#8b90a5', font: { size: 10 },
+                        callback: v => v.toFixed(0) + '%'
+                    },
+                    grid: { color: '#2d3148' },
+                    min: 0,
+                    max: 100,
+                }
+            }
+        },
+        plugins: [{
+            id: 'coinFlipLine',
+            afterDraw(chart) {
+                const { ctx: c, chartArea, scales } = chart;
+                const y = scales.y.getPixelForValue(50);
+                if (y >= chartArea.top && y <= chartArea.bottom) {
+                    c.save();
+                    c.beginPath();
+                    c.setLineDash([6, 4]);
+                    c.strokeStyle = '#8b90a5';
+                    c.lineWidth = 1;
+                    c.moveTo(chartArea.left, y);
+                    c.lineTo(chartArea.right, y);
+                    c.stroke();
+                    // Label
+                    c.fillStyle = '#8b90a5';
+                    c.font = '10px Inter, sans-serif';
+                    c.fillText('coin flip', chartArea.right - 45, y - 4);
+                    c.restore();
+                }
+            }
+        }]
+    });
+}
+
+function renderRandomDistChart() {
+    const ctx = document.getElementById('random-dist-chart').getContext('2d');
+    const analytics = DATA.performance_analytics || {};
+    const results = analytics.random_trader_results || [];
+    const agentValue = analytics.agent_value || 0;
+
+    if (results.length === 0) {
+        ctx.canvas.parentElement.innerHTML = '<p style="color:var(--text2);text-align:center;padding:40px">Benchmarks not initialized yet</p>';
+        return;
+    }
+
+    // Build histogram bins
+    const min = Math.min(...results, agentValue);
+    const max = Math.max(...results, agentValue);
+    const range = max - min || 1;
+    const numBins = 10;
+    const binWidth = range / numBins;
+
+    const bins = Array(numBins).fill(0);
+    const binLabels = [];
+    for (let i = 0; i < numBins; i++) {
+        const lo = min + i * binWidth;
+        const hi = lo + binWidth;
+        binLabels.push('$' + lo.toFixed(0));
+        results.forEach(r => {
+            if (i < numBins - 1 ? (r >= lo && r < hi) : (r >= lo && r <= hi)) {
+                bins[i]++;
+            }
+        });
+    }
+
+    // Find agent's bin and percentile
+    const belowAgent = results.filter(r => r < agentValue).length;
+    const percentile = Math.round(belowAgent / results.length * 100);
+    const agentBin = Math.min(Math.floor((agentValue - min) / binWidth), numBins - 1);
+
+    // Color bars: highlight agent's bin
+    const bgColors = bins.map((_, i) => i === agentBin ? 'rgba(99, 102, 241, 0.6)' : 'rgba(139, 144, 165, 0.3)');
+    const borderColors = bins.map((_, i) => i === agentBin ? '#6366f1' : '#8b90a5');
+
+    if (charts.randomDist) charts.randomDist.destroy();
+    charts.randomDist = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: binLabels,
+            datasets: [{
+                label: 'Random Traders',
+                data: bins,
+                backgroundColor: bgColors,
+                borderColor: borderColors,
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: `Agent: ${percentile}th percentile`,
+                    color: '#6366f1',
+                    font: { size: 12, weight: '600' },
+                    padding: { bottom: 4 },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#8b90a5', font: { size: 9 }, maxRotation: 45 },
+                    grid: { display: false },
+                },
+                y: {
+                    ticks: { color: '#8b90a5', font: { size: 10 } },
+                    grid: { color: '#2d3148' },
+                    title: { display: true, text: 'Count', color: '#8b90a5', font: { size: 10 } },
+                }
+            }
+        },
+        plugins: [{
+            id: 'agentLine',
+            afterDraw(chart) {
+                const { ctx: c, chartArea, scales } = chart;
+                const xScale = scales.x;
+                // Map agent value to pixel position within bar chart
+                const agentPct = (agentValue - min) / range;
+                const x = chartArea.left + agentPct * (chartArea.right - chartArea.left);
+                c.save();
+                c.beginPath();
+                c.setLineDash([4, 3]);
+                c.strokeStyle = '#6366f1';
+                c.lineWidth = 2;
+                c.moveTo(x, chartArea.top);
+                c.lineTo(x, chartArea.bottom);
+                c.stroke();
+                // Label
+                c.fillStyle = '#6366f1';
+                c.font = 'bold 10px Inter, sans-serif';
+                c.textAlign = 'center';
+                c.fillText('Agent', x, chartArea.top - 4);
+                c.restore();
+            }
+        }]
     });
 }
 

@@ -657,7 +657,7 @@ function renderDrawdownChart() {
                 data: values,
                 borderColor: '#ef4444',
                 backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                fill: true,
+                fill: 'origin',
                 tension: 0.3,
                 borderWidth: 2,
                 pointRadius: 2,
@@ -679,6 +679,7 @@ function renderDrawdownChart() {
                     },
                     grid: { color: '#2d3148' },
                     max: 1,
+                    suggestedMin: -5,
                 }
             }
         },

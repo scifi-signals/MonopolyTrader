@@ -55,13 +55,37 @@ def _call_claude(system: str, user: str, max_tokens: int = 1500) -> tuple[str, s
 
 
 def _parse_json(raw: str) -> dict | list:
-    """Parse JSON from Claude response, stripping markdown fences."""
+    """Parse JSON from Claude response, stripping markdown fences.
+
+    Handles common issues: markdown code blocks, trailing text after
+    valid JSON (the 'Extra data' error), and leading non-JSON text.
+    """
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text[:-3]
         text = text.strip()
+
+    # First try standard parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Handle trailing text after valid JSON using raw_decode
+    # (e.g., Claude appends explanation after the JSON object)
+    decoder = json.JSONDecoder()
+    # Find the first { or [ to skip any leading text
+    for i, ch in enumerate(text):
+        if ch in ('{', '['):
+            try:
+                obj, _ = decoder.raw_decode(text, i)
+                return obj
+            except json.JSONDecodeError:
+                continue
+
+    # Last resort: try the original text (will raise a clear error)
     return json.loads(text)
 
 
@@ -454,6 +478,37 @@ What should the agent learn about WHEN to hold vs WHEN to act?"""
             "times_contradicted": 0,
             "model_version": model_ver,
         }
+
+        # Run skeptic challenge on hold lessons too (was previously missing)
+        spy_change = 0
+        try:
+            from .market_data import get_macro_data
+            macro = get_macro_data()
+            spy_change = macro.get("spy_change_pct", 0)
+        except Exception:
+            pass
+
+        # Build a trade-like dict so skeptic_challenge() can work with it
+        pseudo_trade = {
+            "action": strongest.get("action", "HOLD"),
+            "shares": 0,
+            "price": hold.get("price_at_hold", 0),
+            "realized_pnl": cf.get("hypothetical_pnl", 0),
+        }
+        rejected, reason = _apply_hard_rejections(category, spy_change)
+        if rejected:
+            lesson["skeptic_review"] = {"validated": False, "reason": reason}
+            lesson["weight"] = 0.3
+            logger.info(f"Hold lesson hard rejection: {reason}")
+        else:
+            skeptic = await skeptic_challenge(lesson, pseudo_trade, spy_change)
+            lesson["skeptic_review"] = skeptic
+            if not skeptic.get("validated", True):
+                lesson["weight"] = min(lesson["weight"], 0.5)
+                logger.info(f"Skeptic downweighted hold lesson: {skeptic.get('simpler_explanation', '')[:80]}")
+
+        # Add regime tag
+        lesson["regime"] = hold.get("regime", {"trend": "unknown", "volatility": "unknown", "vix": 0})
 
         saved = add_lesson(lesson)
 

@@ -11,12 +11,18 @@ logger = setup_logging("market_data")
 
 
 def get_current_price(ticker: str) -> dict:
-    """Fetch current/latest price data for a ticker."""
+    """Fetch current/latest price data for a ticker.
+
+    Uses 1-min bars for the latest price, but supplements with daily
+    volume data since per-minute volume is often 0 for individual bars.
+    """
     stock = yf.Ticker(ticker)
     hist = stock.history(period="2d", interval="1m")
+    using_daily = False
     if hist.empty:
         # Fallback to daily if intraday unavailable (market closed)
         hist = stock.history(period="5d")
+        using_daily = True
         if hist.empty:
             raise ValueError(f"No price data available for {ticker}")
 
@@ -25,12 +31,22 @@ def get_current_price(ticker: str) -> dict:
     change = latest["Close"] - prev_close
     change_pct = (change / prev_close) * 100 if prev_close else 0
 
+    # Get daily volume (more reliable than per-minute volume which is often 0)
+    daily_volume = int(latest["Volume"])
+    if not using_daily:
+        try:
+            daily_hist = stock.history(period="5d", interval="1d")
+            if not daily_hist.empty:
+                daily_volume = int(daily_hist["Volume"].iloc[-1])
+        except Exception:
+            pass
+
     return {
         "price": round(float(latest["Close"]), 2),
         "open": round(float(latest["Open"]), 2),
         "high": round(float(latest["High"]), 2),
         "low": round(float(latest["Low"]), 2),
-        "volume": int(latest["Volume"]),
+        "volume": daily_volume,
         "change": round(change, 2),
         "change_pct": round(change_pct, 2),
         "timestamp": str(hist.index[-1]),

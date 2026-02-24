@@ -531,6 +531,28 @@ def _is_bootstrapped() -> bool:
 
 # --- Scheduler ---
 
+def _et_to_utc_time(et_time_str: str) -> str:
+    """Convert an ET time string (HH:MM) to UTC (HH:MM) for the schedule library.
+
+    The schedule library uses the system clock (UTC on our server), so all
+    .at() times must be expressed in UTC. This converts ET → UTC accounting
+    for the current EST/EDT offset.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    et_tz = ZoneInfo("America/New_York")
+    utc_tz = ZoneInfo("UTC")
+    h, m = map(int, et_time_str.split(":"))
+
+    # Build a datetime for today at the target ET time
+    now = datetime.now(et_tz)
+    target_et = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    # Convert to UTC
+    target_utc = target_et.astimezone(utc_tz)
+    return target_utc.strftime("%H:%M")
+
+
 def run_scheduler():
     """Main scheduler loop — polls during market hours, researches after close."""
     config = load_config()
@@ -539,14 +561,24 @@ def run_scheduler():
     logger.info(f"Scheduler started — polling every {interval} min during market hours")
     logger.info(f"Market hours: {config['market_hours']['open']}-{config['market_hours']['close']} ET")
 
+    # Convert ET target times to UTC for the schedule library (server is UTC)
+    snapshot_utc = _et_to_utc_time("09:35")
+    research_utc = _et_to_utc_time("16:30")
+    decay_utc = _et_to_utc_time("18:00")
+
+    logger.info(
+        f"Scheduled times (ET→UTC): snapshot 09:35→{snapshot_utc}, "
+        f"research 16:30→{research_utc}, decay Sun 18:00→{decay_utc}"
+    )
+
     # Schedule decision cycles
     schedule.every(interval).minutes.do(run_cycle)
 
     # Schedule daily research at 4:30 PM ET (30 min after close)
-    schedule.every().day.at("16:30").do(lambda: asyncio.run(run_daily_research()))
+    schedule.every().day.at(research_utc).do(lambda: asyncio.run(run_daily_research()))
 
     # Schedule daily snapshot at market open
-    schedule.every().day.at("09:35").do(save_snapshot)
+    schedule.every().day.at(snapshot_utc).do(save_snapshot)
 
     # Schedule weekly lesson decay (Sundays at 6 PM ET)
     def _weekly_decay():
@@ -556,7 +588,7 @@ def run_scheduler():
             logger.info(f"Weekly lesson decay complete: {archived} archived")
         except Exception as e:
             logger.warning(f"Lesson decay failed: {e}")
-    schedule.every().sunday.at("18:00").do(_weekly_decay)
+    schedule.every().sunday.at(decay_utc).do(_weekly_decay)
 
     # Run initial cycle immediately if market is open
     if is_market_open(config):

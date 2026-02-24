@@ -314,11 +314,9 @@ def _apply_confidence_adjustments(adjustments: dict, trade: dict):
             s["weight"] = round(max(0.05, min(0.40, s["weight"] + adj)), 4)
             logger.info(f"Strategy {strategy_name}: weight {old_weight:.3f} -> {s['weight']:.3f} ({adj:+.3f})")
 
-    # Normalize weights to sum to 1.0
-    total = sum(s["weight"] for s in strategies.values())
-    if total > 0:
-        for s in strategies.values():
-            s["weight"] = round(s["weight"] / total, 4)
+    # No normalization — strategies earn/lose trust independently.
+    # aggregate_signals() divides by total_weight, so non-normalized is fine.
+    # Normalizing rewarded untested strategies (they drifted up when one got punished).
 
     # Update trade counts
     trade_strategy = trade.get("strategy", "")
@@ -544,11 +542,7 @@ def _apply_hold_confidence_adjustments(adjustments: dict, hold: dict):
             s["weight"] = round(max(0.05, min(0.40, s["weight"] + adj)), 4)
             logger.info(f"Hold adj: {strategy_name} weight {old_weight:.3f} -> {s['weight']:.3f} ({adj:+.3f})")
 
-    # Normalize
-    total = sum(s["weight"] for s in strategies.values())
-    if total > 0:
-        for s in strategies.values():
-            s["weight"] = round(s["weight"] / total, 4)
+    # No normalization — see _apply_confidence_adjustments comment.
 
     update_strategy_scores(scores)
 
@@ -768,11 +762,7 @@ async def evolve_strategy_weights() -> dict:
         strategies[name]["weight"] = max(0.05, min(0.40, strategies[name]["weight"] + adj))
         changes[name] = round(adj, 4)
 
-    # Normalize
-    total_weight = sum(s["weight"] for s in strategies.values())
-    if total_weight > 0:
-        for s in strategies.values():
-            s["weight"] = round(s["weight"] / total_weight, 4)
+    # No normalization — see _apply_confidence_adjustments comment.
 
     # Determine trend for each strategy
     for name, s in strategies.items():

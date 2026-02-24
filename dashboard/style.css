@@ -728,6 +728,16 @@ header h1 {
 }
 .ha-item strong { color: var(--text); font-weight: 500; }
 
+/* Disclaimer footer */
+.disclaimer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text2);
+    padding: 24px 0 12px;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }

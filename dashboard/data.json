@@ -1,36 +1,37 @@
 {
-  "generated_at": "2026-02-21T01:15:14.848873+00:00",
+  "generated_at": "2026-02-24T19:47:06.575799+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 411.71,
-    "open": 411.7,
-    "high": 412.0,
-    "low": 411.66,
-    "volume": 354575,
-    "change": 0.02,
-    "change_pct": 0.0,
-    "timestamp": "2026-02-20 15:59:00-05:00"
+    "price": 409.08,
+    "open": 409.02,
+    "high": 409.13,
+    "low": 408.92,
+    "volume": 41884001,
+    "change": 0.07,
+    "change_pct": 0.02,
+    "timestamp": "2026-02-24 14:46:00-05:00"
   },
+  "latest_cycle": {},
   "portfolio": {
     "cash": 752.94,
     "holdings": {
       "TSLA": {
         "shares": 0.6,
         "avg_cost_basis": 411.77,
-        "current_price": 411.39,
-        "unrealized_pnl": -0.23
+        "current_price": 411.76,
+        "unrealized_pnl": -0.01
       }
     },
-    "total_value": 999.77,
-    "total_pnl": -0.23,
-    "total_pnl_pct": -0.02,
+    "total_value": 1000.0,
+    "total_pnl": 0.0,
+    "total_pnl_pct": 0.0,
     "total_trades": 1,
     "winning_trades": 0,
     "losing_trades": 0,
     "created_at": "2026-02-18T20:42:22.417690+00:00",
-    "last_updated": "2026-02-20T20:52:36.922108+00:00",
+    "last_updated": "2026-02-18T21:00:02.491025+00:00",
     "realized_pnl": 0,
-    "unrealized_pnl": -0.23,
+    "unrealized_pnl": -0.01,
     "win_rate": 0.0,
     "starting_balance": 1000.0
   },
@@ -52,11 +53,7 @@
       "reasoning": "This is my first trade, so I'm starting conservatively. TSLA is showing potential reversal signals: RSI at 42.9 (oversold but not extreme), price near lower Bollinger band ($397.14), and a slight positive MACD histogram (0.18). The stock has declined from $428 to $411 over recent days, creating a potential bounce opportunity. Volume is low which could limit upside, but also suggests selling pressure may be exhausted. Multiple strategy signals lean BUY with 0.22 aggregate confidence.",
       "signals": {},
       "knowledge_applied": [],
-      "review": {
-        "lesson_id": "lesson_001",
-        "was_correct": false,
-        "reviewed_at": "2026-02-19T14:39:43.815324+00:00"
-      }
+      "review": null
     }
   ],
   "snapshots": [
@@ -76,40 +73,6 @@
       "total_pnl_pct": 0.0,
       "total_trades": 0,
       "timestamp": "2026-02-18T20:43:59.710155+00:00"
-    },
-    {
-      "date": "2026-02-19",
-      "total_value": 1001.46,
-      "cash": 752.94,
-      "holdings": {
-        "TSLA": {
-          "shares": 0.6,
-          "avg_cost_basis": 411.77,
-          "current_price": 414.2,
-          "unrealized_pnl": 1.46
-        }
-      },
-      "total_pnl": 1.46,
-      "total_pnl_pct": 0.15,
-      "total_trades": 1,
-      "timestamp": "2026-02-19T16:32:43.460582+00:00"
-    },
-    {
-      "date": "2026-02-20",
-      "total_value": 1000.48,
-      "cash": 752.94,
-      "holdings": {
-        "TSLA": {
-          "shares": 0.6,
-          "avg_cost_basis": 411.77,
-          "current_price": 412.57,
-          "unrealized_pnl": 0.48
-        }
-      },
-      "total_pnl": 0.48,
-      "total_pnl_pct": 0.05,
-      "total_trades": 1,
-      "timestamp": "2026-02-20T16:32:47.344840+00:00"
     }
   ],
   "benchmark": [
@@ -120,38 +83,38 @@
   ],
   "benchmarks_comparison": {
     "agent": {
-      "value": 999.77,
-      "return_pct": -0.02
+      "value": 1000.0,
+      "return_pct": 0.0
     },
     "buy_hold_tsla": {
-      "value": 995.02,
-      "return_pct": -0.5
+      "value": 1000.0,
+      "return_pct": 0.0
     },
     "buy_hold_spy": {
-      "value": 1001.09,
-      "return_pct": 0.11
+      "value": 1000.0,
+      "return_pct": 0.0
     },
     "dca_tsla": {
-      "value": 999.43,
-      "return_pct": -0.06
+      "value": 1000.0,
+      "return_pct": 0.0
     },
     "random_median": {
       "value": 1000.0,
       "return_pct": 0.0
     },
-    "alpha_vs_tsla": 0.48,
-    "alpha_vs_spy": -0.13,
+    "alpha_vs_tsla": 0.0,
+    "alpha_vs_spy": 0.0,
     "percentile_vs_random": 50.0,
-    "beats_buy_hold_tsla": true,
+    "beats_buy_hold_tsla": false,
     "beats_buy_hold_spy": false,
-    "beats_dca": true,
+    "beats_dca": false,
     "beats_random_median": false
   },
   "graduation_criteria": {
     "criteria": {
       "min_trading_days": {
         "required": 90,
-        "actual": 3,
+        "actual": 1,
         "passed": false
       },
       "min_trades": {
@@ -176,13 +139,13 @@
       },
       "prediction_accuracy": {
         "required": 55,
-        "actual": 16.033333333333335,
+        "actual": 0,
         "passed": false
       },
       "beats_buy_hold_tsla": {
         "required": true,
-        "actual": true,
-        "passed": true
+        "actual": false,
+        "passed": false
       },
       "beats_buy_hold_spy": {
         "required": true,
@@ -191,8 +154,8 @@
       },
       "beats_dca": {
         "required": true,
-        "actual": true,
-        "passed": true
+        "actual": false,
+        "passed": false
       },
       "beats_random_median": {
         "required": true,
@@ -206,195 +169,47 @@
       },
       "positive_return": {
         "required": 0,
-        "actual": -0.02,
+        "actual": 0.0,
         "passed": false
       }
     },
-    "passed": 3,
+    "passed": 1,
     "total": 12,
     "all_passed": false
   },
-  "verdict": "inconclusive",
+  "verdict": "too_early",
   "health": {
-    "timestamp": "2026-02-21T01:15:14.845327+00:00",
-    "overall": true,
+    "timestamp": "2026-02-24T19:47:05.949365+00:00",
+    "overall": false,
     "components": {
       "market_data": {
         "healthy": true,
-        "detail": "TSLA: $411.71"
+        "detail": "TSLA: $409.08"
       },
       "portfolio": {
         "healthy": true,
-        "detail": "Value: $999.77"
+        "detail": "Value: $1000.00"
       },
       "knowledge_base": {
         "healthy": true,
-        "detail": "1 lessons, 0 patterns"
+        "detail": "0 lessons, 0 patterns"
       },
       "claude_api": {
-        "healthy": true,
-        "detail": "API key found"
+        "healthy": false,
+        "detail": "No API key"
       }
     }
   },
   "active_alerts": [],
-  "milestones": [
-    {
-      "milestone_id": "BEAT_BUY_HOLD",
-      "name": "Beating Buy & Hold",
-      "triggered_at": "2026-02-20T16:32:47.341062+00:00",
-      "severity": "info",
-      "polarity": "positive",
-      "message": "Agent is beating the simplest possible strategy.",
-      "model_version": "claude-sonnet-4-20250514",
-      "metrics_snapshot": {
-        "trading_days": 3,
-        "total_trades": 1,
-        "percentile_vs_random": 50.0,
-        "total_return_pct": 0.05
-      }
-    }
-  ],
+  "milestones": [],
   "hold_log_summary": {
-    "total_holds": 51,
-    "recent": [
-      {
-        "timestamp": "2026-02-20T19:51:42.901833+00:00",
-        "reason": "agent_decision",
-        "original_action": "HOLD",
-        "original_confidence": 0,
-        "original_strategy": "error",
-        "price_at_hold": 410.75,
-        "strongest_signal_ignored": {
-          "action": "BUY",
-          "strategy": "dca",
-          "confidence": 0.25
-        },
-        "regime": {
-          "trend": "sideways",
-          "volatility": "low",
-          "vix": 19.01,
-          "spy_slope_pct_per_day": 0.0212
-        },
-        "counterfactual_scored": false,
-        "counterfactual_outcome": null
-      },
-      {
-        "timestamp": "2026-02-20T20:07:13.693367+00:00",
-        "reason": "agent_decision",
-        "original_action": "HOLD",
-        "original_confidence": 0.3,
-        "original_strategy": "wait_for_clearer_signals",
-        "price_at_hold": 410.89,
-        "strongest_signal_ignored": {
-          "action": "BUY",
-          "strategy": "dca",
-          "confidence": 0.25
-        },
-        "regime": {
-          "trend": "sideways",
-          "volatility": "low",
-          "vix": 19.0,
-          "spy_slope_pct_per_day": 0.0214
-        },
-        "counterfactual_scored": false,
-        "counterfactual_outcome": null
-      },
-      {
-        "timestamp": "2026-02-20T20:22:23.643883+00:00",
-        "reason": "agent_decision",
-        "original_action": "HOLD",
-        "original_confidence": 0.15,
-        "original_strategy": "mixed_signals_low_conviction",
-        "price_at_hold": 409.67,
-        "strongest_signal_ignored": {
-          "action": "SELL",
-          "strategy": "momentum",
-          "confidence": 0.42
-        },
-        "regime": {
-          "trend": "sideways",
-          "volatility": "low",
-          "vix": 19.07,
-          "spy_slope_pct_per_day": 0.0211
-        },
-        "counterfactual_scored": false,
-        "counterfactual_outcome": null
-      },
-      {
-        "timestamp": "2026-02-20T20:37:35.904138+00:00",
-        "reason": "agent_decision",
-        "original_action": "HOLD",
-        "original_confidence": 0.2,
-        "original_strategy": "wait_for_clearer_signal",
-        "price_at_hold": 410.35,
-        "strongest_signal_ignored": {
-          "action": "BUY",
-          "strategy": "dca",
-          "confidence": 0.25
-        },
-        "regime": {
-          "trend": "sideways",
-          "volatility": "low",
-          "vix": 19.25,
-          "spy_slope_pct_per_day": 0.0211
-        },
-        "counterfactual_scored": false,
-        "counterfactual_outcome": null
-      },
-      {
-        "timestamp": "2026-02-20T20:52:46.145894+00:00",
-        "reason": "agent_decision",
-        "original_action": "HOLD",
-        "original_confidence": 0.45,
-        "original_strategy": "risk_management",
-        "price_at_hold": 411.39,
-        "strongest_signal_ignored": {
-          "action": "BUY",
-          "strategy": "momentum",
-          "confidence": 0.57
-        },
-        "regime": {
-          "trend": "sideways",
-          "volatility": "low",
-          "vix": 19.26,
-          "spy_slope_pct_per_day": 0.0212
-        },
-        "counterfactual_scored": false,
-        "counterfactual_outcome": null
-      }
-    ]
-  },
-  "lessons": [
-    {
-      "linked_trade": "txn_001",
-      "what_i_predicted": "TSLA would recover modestly by $5-10 over 2 hours, bouncing from oversold levels near lower Bollinger band, with potential for $420+ by end of day",
-      "what_actually_happened": "TSLA continued falling, dropping $6.00 (-1.46%) from entry price of $411.76 to $405.76, moving further away from the lower Bollinger band instead of bouncing",
-      "why_i_was_wrong": "The bounce signal was premature. While the technical setup looked reasonable (RSI at 42.9, near lower Bollinger band), the selling pressure hadn't actually exhausted. The 'oversold' condition wasn't extreme enough to generate a reliable bounce, and low volume actually indicated weak buying interest rather than exhausted selling. The agent mistook a pause in selling for a reversal setup.",
-      "lesson": "RSI at 42.9 is not truly oversold - wait for RSI below 30 for higher probability bounce signals. Low volume during declines often means weak buying interest, not exhausted selling pressure.",
-      "category": "signal_early",
-      "confidence_adjustment": {
-        "conservative_first_trade": -0.08
-      },
-      "weight": 1.0,
-      "decay_rate": 0.95,
-      "times_validated": 0,
-      "times_contradicted": 0,
-      "model_version": "claude-sonnet-4-20250514",
-      "skeptic_review": {
-        "validated": true,
-        "simpler_explanation": "Skeptic unavailable",
-        "skeptic_model_version": "claude-haiku-4-5-20251001"
-      },
-      "regime": {
-        "trend": "sideways",
-        "volatility": "normal",
-        "vix": 20.41
-      },
-      "id": "lesson_001",
-      "timestamp": "2026-02-19T14:39:43.813792+00:00"
+    "total_holds": 0,
+    "recent": [],
+    "counterfactual_stats": {
+      "total_scored": 0
     }
-  ],
+  },
+  "lessons": [],
   "patterns": [],
   "predictions": [
     {
@@ -419,2248 +234,21 @@
         }
       },
       "outcomes": {
-        "30min": {
-          "actual": 405.76,
-          "direction_correct": false,
-          "error_pct": 1.75,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "2hr": {
-          "actual": 405.76,
-          "direction_correct": false,
-          "error_pct": 2.46,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 416.0
-        },
-        "1day": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 2.46,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 420.0
-        }
+        "30min": null,
+        "2hr": null,
+        "1day": null
       },
       "reasoning": "I predict TSLA will recover modestly by $5-10 over the next 2 hours as it bounces from oversold levels near the lower Bollinger band, with potential f",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_002",
-      "timestamp": "2026-02-19T14:39:28.835359+00:00",
-      "price_at_prediction": 405.76,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 406,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 410,
-          "confidence": 0.45
-        },
-        "1day": {
-          "direction": "down",
-          "target": 400,
-          "confidence": 0.55
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 408.61,
-          "direction_correct": false,
-          "error_pct": 0.64,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 406
-        },
-        "2hr": {
-          "actual": 414.46,
-          "direction_correct": true,
-          "error_pct": 1.09,
-          "predicted_direction": "up",
-          "actual_direction": "up",
-          "predicted_target": 410
-        },
-        "1day": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 2.42,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 400
-        }
-      },
-      "reasoning": "I predict TSLA will remain volatile between $400-415 over the next 2 hours, with potential for a bounce to $410-412 if oversold conditions persist, bu",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_003",
-      "timestamp": "2026-02-19T14:54:55.401372+00:00",
-      "price_at_prediction": 407.87,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 407.0,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.55
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.4
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.35,
-          "direction_correct": false,
-          "error_pct": 0.82,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 407.0
-        },
-        "2hr": {
-          "actual": 412.96,
-          "direction_correct": false,
-          "error_pct": 1.97,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        },
-        "1day": {
-          "actual": 408.28,
-          "direction_correct": false,
-          "error_pct": 0.42,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.0
-        }
-      },
-      "reasoning": "I predict TSLA will continue consolidating between $405-415 over the next 30 minutes, potentially testing lower support around $405 before any meaning",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_004",
-      "timestamp": "2026-02-19T15:10:07.363484+00:00",
-      "price_at_prediction": 408.61,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.55
-        },
-        "1day": {
-          "direction": "up",
-          "target": 415.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.73,
-          "direction_correct": false,
-          "error_pct": 0.42,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.0
-        },
-        "2hr": {
-          "actual": 413.85,
-          "direction_correct": false,
-          "error_pct": 0.82,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "1day": {
-          "actual": 408.45,
-          "direction_correct": false,
-          "error_pct": 1.58,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 415.0
-        }
-      },
-      "reasoning": "I predict TSLA will continue sideways consolidation around $408-412 over next 2 hours, with potential for small bounce to $415 within 1 day if RSI ove",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_005",
-      "timestamp": "2026-02-19T15:25:18.392036+00:00",
-      "price_at_prediction": 410.35,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 412.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.85,
-          "direction_correct": false,
-          "error_pct": 0.09,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 414.34,
-          "direction_correct": true,
-          "error_pct": 0.57,
-          "predicted_direction": "up",
-          "actual_direction": "up",
-          "predicted_target": 412.0
-        },
-        "1day": {
-          "actual": 409.7,
-          "direction_correct": true,
-          "error_pct": 0.66,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 407.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain sideways in the $405-415 range over the next 30 minutes as it consolidates in a low-volume environment, with potential for ",
-      "score": "2/3"
-    },
-    {
-      "id": "pred_006",
-      "timestamp": "2026-02-19T15:40:30.452125+00:00",
-      "price_at_prediction": 410.73,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 413.0,
-          "confidence": 0.3
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.25
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.6,
-          "direction_correct": false,
-          "error_pct": 0.27,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 412.49,
-          "direction_correct": true,
-          "error_pct": 0.12,
-          "predicted_direction": "up",
-          "actual_direction": "up",
-          "predicted_target": 413.0
-        },
-        "1day": {
-          "actual": 411.67,
-          "direction_correct": false,
-          "error_pct": 0.08,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 412.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours with potential slight upward bias to $412-413 due to oversold daily RSI",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_007",
-      "timestamp": "2026-02-19T15:55:43.129507+00:00",
-      "price_at_prediction": 410.85,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.55
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.6
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 414.2,
-          "direction_correct": false,
-          "error_pct": 0.66,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 409.76,
-          "direction_correct": false,
-          "error_pct": 0.06,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.0
-        },
-        "1day": {
-          "actual": 413.35,
-          "direction_correct": false,
-          "error_pct": 2.06,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain in the $405-$415 range over the next 2 hours due to lack of directional momentum and mixed technical signals. Waiting for R",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_008",
-      "timestamp": "2026-02-19T16:10:53.979982+00:00",
-      "price_at_prediction": 412.6,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 414.46,
-          "direction_correct": false,
-          "error_pct": 0.72,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 409.93,
-          "direction_correct": true,
-          "error_pct": 0.47,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 408.0
-        },
-        "1day": {
-          "actual": 412.57,
-          "direction_correct": true,
-          "error_pct": 1.87,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will trade sideways between $405-420 over the next 2 hours with slight downward bias given weak volume and mixed technical signals",
-      "score": "2/3"
-    },
-    {
-      "id": "pred_009",
-      "timestamp": "2026-02-19T16:26:06.333624+00:00",
-      "price_at_prediction": 414.2,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 413.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 415.0,
-          "confidence": 0.3
-        },
-        "1day": {
-          "direction": "up",
-          "target": 418.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.96,
-          "direction_correct": false,
-          "error_pct": 0.13,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 413.5
-        },
-        "2hr": {
-          "actual": 409.47,
-          "direction_correct": false,
-          "error_pct": 1.33,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 415.0
-        },
-        "1day": {
-          "actual": 409.27,
-          "direction_correct": false,
-          "error_pct": 2.09,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 418.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $410-420 over the next 2 hours as it consolidates above intraday SMA20, but lacks volume conviction for",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_010",
-      "timestamp": "2026-02-19T16:41:25.386664+00:00",
-      "price_at_prediction": 414.46,
-      "predictions": {
-        "30min": {
-          "direction": "up",
-          "target": 416.5,
-          "confidence": 0.55
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 415.0,
-          "confidence": 0.6
-        },
-        "1day": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.65
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 413.85,
-          "direction_correct": false,
-          "error_pct": 0.64,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 416.5
-        },
-        "2hr": {
-          "actual": 409.4,
-          "direction_correct": false,
-          "error_pct": 1.35,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 415.0
-        },
-        "1day": {
-          "actual": 411.25,
-          "direction_correct": true,
-          "error_pct": 0.8,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 408.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $410-$420 over the next 2 hours with potential for slight upside to $416-$418 if momentum continues, bu",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_011",
-      "timestamp": "2026-02-19T16:56:35.816996+00:00",
-      "price_at_prediction": 412.96,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 413.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 414.34,
-          "direction_correct": false,
-          "error_pct": 0.2,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 413.5
-        },
-        "2hr": {
-          "actual": 410.0,
-          "direction_correct": false,
-          "error_pct": 0.49,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.0
-        },
-        "1day": {
-          "actual": 410.45,
-          "direction_correct": true,
-          "error_pct": 0.6,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 408.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $410-$415 over the next 2 hours as mixed signals and low conviction warrant patience",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_012",
-      "timestamp": "2026-02-19T17:11:46.273964+00:00",
-      "price_at_prediction": 413.85,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 414.0,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 413.0,
-          "confidence": 0.55
-        },
-        "1day": {
-          "direction": "down",
-          "target": 410.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.49,
-          "direction_correct": false,
-          "error_pct": 0.36,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 414.0
-        },
-        "2hr": {
-          "actual": 410.05,
-          "direction_correct": false,
-          "error_pct": 0.71,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "1day": {
-          "actual": 408.28,
-          "direction_correct": true,
-          "error_pct": 0.42,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 410.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $410-$420 over the next 2 hours due to mixed signals and lack of clear directional catalyst",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_013",
-      "timestamp": "2026-02-19T17:26:57.459020+00:00",
-      "price_at_prediction": 414.34,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 415.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 418.0,
-          "confidence": 0.45
-        },
-        "1day": {
-          "direction": "up",
-          "target": 420.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.76,
-          "direction_correct": false,
-          "error_pct": 1.26,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 415.0
-        },
-        "2hr": {
-          "actual": 410.2,
-          "direction_correct": false,
-          "error_pct": 1.87,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 418.0
-        },
-        "1day": {
-          "actual": 407.72,
-          "direction_correct": false,
-          "error_pct": 2.92,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 420.0
-        }
-      },
-      "reasoning": "I predict TSLA will consolidate between $410-420 over the next 2 hours as it lacks clear directional catalyst, with potential upside if volume increas",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_014",
-      "timestamp": "2026-02-19T17:42:07.384515+00:00",
-      "price_at_prediction": 412.49,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 410.5,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 413.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.93,
-          "direction_correct": false,
-          "error_pct": 0.5,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.0
-        },
-        "2hr": {
-          "actual": 408.82,
-          "direction_correct": true,
-          "error_pct": 0.41,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 410.5
-        },
-        "1day": {
-          "actual": 407.92,
-          "direction_correct": false,
-          "error_pct": 1.23,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        }
-      },
-      "reasoning": "TSLA will likely trade sideways to slightly down over next 2-4 hours as it lacks clear directional momentum. Price may test $410 support but unlikely ",
-      "score": "1/3"
-    },
-    {
-      "id": "pred_015",
-      "timestamp": "2026-02-19T17:57:18.896281+00:00",
-      "price_at_prediction": 409.76,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "up",
-          "target": 415.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.47,
-          "direction_correct": false,
-          "error_pct": 0.24,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 408.5
-        },
-        "2hr": {
-          "actual": 409.71,
-          "direction_correct": true,
-          "error_pct": 0.67,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 407.0
-        },
-        "1day": {
-          "actual": 409.91,
-          "direction_correct": true,
-          "error_pct": 1.23,
-          "predicted_direction": "up",
-          "actual_direction": "up",
-          "predicted_target": 415.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-415 over the next 2 hours as mixed signals and low volume suggest consolidation, but potential for",
-      "score": "2/3"
-    },
-    {
-      "id": "pred_016",
-      "timestamp": "2026-02-19T18:12:28.945026+00:00",
-      "price_at_prediction": 409.93,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.3
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.25
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.4,
-          "direction_correct": false,
-          "error_pct": 0.22,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 408.5
-        },
-        "2hr": {
-          "actual": 410.85,
-          "direction_correct": false,
-          "error_pct": 0.95,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 407.0
-        },
-        "1day": {
-          "actual": 409.78,
-          "direction_correct": false,
-          "error_pct": 0.3,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 411.0
-        }
-      },
-      "reasoning": "I predict TSLA will continue consolidating in the $405-415 range over the next 30 minutes, potentially testing $407-408 support, because the current s",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_017",
-      "timestamp": "2026-02-19T18:27:40.468291+00:00",
-      "price_at_prediction": 409.47,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 409,
-          "confidence": 0.55
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405,
-          "confidence": 0.65
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.0,
-          "direction_correct": false,
-          "error_pct": 0.0,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410
-        },
-        "2hr": {
-          "actual": 410.03,
-          "direction_correct": false,
-          "error_pct": 0.25,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409
-        },
-        "1day": {
-          "actual": 411.36,
-          "direction_correct": false,
-          "error_pct": 1.57,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405
-        }
-      },
-      "reasoning": "I predict TSLA will remain in sideways chop between $405-$415 over next 2 hours as mixed signals and low volume suggest indecision. Waiting for RSI be",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_018",
-      "timestamp": "2026-02-19T18:42:51.751529+00:00",
-      "price_at_prediction": 409.4,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.6
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407.5,
-          "confidence": 0.7
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.65
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.05,
-          "direction_correct": false,
-          "error_pct": 0.11,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 410.52,
-          "direction_correct": false,
-          "error_pct": 0.74,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 407.5
-        },
-        "1day": {
-          "actual": 412.77,
-          "direction_correct": false,
-          "error_pct": 1.92,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $407-$415 over next 2 hours, then potentially test $405 support by end of day as retail buying pressure",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_019",
-      "timestamp": "2026-02-19T18:58:02.000593+00:00",
-      "price_at_prediction": 410.0,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411,
-          "confidence": 0.25
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405,
-          "confidence": 0.4
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.2,
-          "direction_correct": false,
-          "error_pct": 0.19,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411
-        },
-        "2hr": {
-          "actual": 411.65,
-          "direction_correct": false,
-          "error_pct": 1.14,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 407
-        },
-        "1day": {
-          "actual": 413.23,
-          "direction_correct": false,
-          "error_pct": 2.03,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405
-        }
-      },
-      "reasoning": "I predict TSLA will remain rangebound between $405-$415 over the next 30 minutes due to mixed signals and lack of clear directional catalyst",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_020",
-      "timestamp": "2026-02-19T19:13:12.082548+00:00",
-      "price_at_prediction": 410.05,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 408.82,
-          "direction_correct": false,
-          "error_pct": 0.41,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.17,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 409.0
-        },
-        "1day": {
-          "actual": 412.2,
-          "direction_correct": false,
-          "error_pct": 1.28,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 407.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-415 over the next 2 hours due to mixed technical signals and lack of clear directional momentum",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_021",
-      "timestamp": "2026-02-19T19:28:22.968347+00:00",
-      "price_at_prediction": 410.2,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.55
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.6
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.65
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.71,
-          "direction_correct": false,
-          "error_pct": 0.19,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.56,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.0
-        },
-        "1day": {
-          "actual": 410.66,
-          "direction_correct": false,
-          "error_pct": 1.4,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours as it consolidates near current levels, with potential for a modest bou",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_022",
-      "timestamp": "2026-02-19T19:43:33.414156+00:00",
-      "price_at_prediction": 408.82,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.85,
-          "direction_correct": false,
-          "error_pct": 0.45,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.0
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.08,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.0
-        },
-        "1day": {
-          "actual": 410.75,
-          "direction_correct": false,
-          "error_pct": 1.42,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-415 over the next 2 hours as mixed signals suggest no strong directional bias, with potential for ",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_023",
-      "timestamp": "2026-02-19T19:58:44.863209+00:00",
-      "price_at_prediction": 409.71,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.6
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.03,
-          "direction_correct": false,
-          "error_pct": 0.01,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.0
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.29,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 408.5
-        },
-        "1day": {
-          "actual": 410.89,
-          "direction_correct": false,
-          "error_pct": 1.45,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours as conflicting signals and mixed sentiment create sideways action. The ",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_024",
-      "timestamp": "2026-02-19T20:13:56.785970+00:00",
-      "price_at_prediction": 410.85,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.45
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 413.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.35
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.52,
-          "direction_correct": false,
-          "error_pct": 0.24,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.8,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "1day": {
-          "actual": 409.67,
-          "direction_correct": false,
-          "error_pct": 0.57,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain sideways between $408-$415 over the next 30 minutes, with potential for a small bounce to $412-413 over 2 hours due to slig",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_025",
-      "timestamp": "2026-02-19T20:29:07.512417+00:00",
-      "price_at_prediction": 410.03,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.6
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 411.65,
-          "direction_correct": false,
-          "error_pct": 0.28,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.32,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 411.0
-        },
-        "1day": {
-          "actual": 410.35,
-          "direction_correct": false,
-          "error_pct": 1.32,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "TSLA will trade sideways between $405-415 over next 2 hours as mixed signals and conflicting momentum create consolidation pattern",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_026",
-      "timestamp": "2026-02-19T20:44:18.680642+00:00",
-      "price_at_prediction": 410.52,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 413.0,
-          "confidence": 0.45
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.55
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.32,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 411.0
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.8,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "1day": {
-          "actual": 411.39,
-          "direction_correct": false,
-          "error_pct": 1.58,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        }
-      },
-      "reasoning": "I predict TSLA will remain in a tight range around $410-415 over the next 2 hours due to low volume and mixed technical signals, with potential for a ",
-      "score": "0/3"
-    },
-    {
-      "id": "pred_027",
-      "timestamp": "2026-02-19T20:59:29.970030+00:00",
-      "price_at_prediction": 411.65,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 414.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 0.56,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.0
-        },
-        "2hr": {
-          "actual": 409.68,
-          "direction_correct": false,
-          "error_pct": 1.04,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 414.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$420 over the next 2 hours with potential for slight upward drift as RSI normalizes, but lack clea",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_028",
-      "timestamp": "2026-02-20T14:44:43.942498+00:00",
-      "price_at_prediction": 409.68,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 406.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 408.45,
-          "direction_correct": false,
-          "error_pct": 0.38,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.0
-        },
-        "2hr": {
-          "actual": 411.25,
-          "direction_correct": false,
-          "error_pct": 0.06,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.0
-        },
-        "1day": null
-      },
-      "reasoning": "TSLA will remain range-bound between $405-$415 over next 2 hours as market digests mixed signals and low volume indicates lack of conviction",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_029",
-      "timestamp": "2026-02-20T14:59:55.999588+00:00",
-      "price_at_prediction": 408.28,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 407.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 406.0,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.7,
-          "direction_correct": false,
-          "error_pct": 0.54,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 407.5
-        },
-        "2hr": {
-          "actual": 410.45,
-          "direction_correct": false,
-          "error_pct": 1.1,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 406.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain flat to slightly down in the $405-$412 range over the next 2 hours as it continues to consolidate below key moving averages",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_030",
-      "timestamp": "2026-02-20T15:15:06.078739+00:00",
-      "price_at_prediction": 408.45,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 406.0,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.4
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 411.67,
-          "direction_correct": false,
-          "error_pct": 0.9,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 408.0
-        },
-        "2hr": {
-          "actual": 408.28,
-          "direction_correct": true,
-          "error_pct": 0.56,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 406.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours as it continues consolidating near Bollinger band midpoint with mixed m",
-      "score": "1/2"
-    },
-    {
-      "id": "pred_031",
-      "timestamp": "2026-02-20T15:30:17.295355+00:00",
-      "price_at_prediction": 409.7,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 409.5,
-          "confidence": 0.25
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 413.35,
-          "direction_correct": false,
-          "error_pct": 0.94,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.5
-        },
-        "2hr": {
-          "actual": 407.72,
-          "direction_correct": true,
-          "error_pct": 0.07,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 408.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will trade sideways to slightly down over the next 2 hours due to mixed signals and lack of volume, with potential for minor bounce if ",
-      "score": "1/2"
-    },
-    {
-      "id": "pred_032",
-      "timestamp": "2026-02-20T15:45:35.060790+00:00",
-      "price_at_prediction": 411.67,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.57,
-          "direction_correct": false,
-          "error_pct": 0.26,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 407.92,
-          "direction_correct": true,
-          "error_pct": 0.02,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 408.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$420 over the next 2 hours, with potential downside risk given mixed signals and negative news sen",
-      "score": "1/2"
-    },
-    {
-      "id": "pred_033",
-      "timestamp": "2026-02-20T16:00:54.183943+00:00",
-      "price_at_prediction": 413.35,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 413.0,
-          "confidence": 0.55
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 410.0,
-          "confidence": 0.6
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 415.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.97,
-          "direction_correct": false,
-          "error_pct": 0.73,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "2hr": {
-          "actual": 409.91,
-          "direction_correct": true,
-          "error_pct": 0.02,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 410.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will continue sideways movement between $410-$420 over next 2 hours due to low volume and mixed signals, with potential downside if neg",
-      "score": "1/2"
-    },
-    {
-      "id": "pred_034",
-      "timestamp": "2026-02-20T16:16:07.033951+00:00",
-      "price_at_prediction": 412.57,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 413.0,
-          "confidence": 0.55
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 415.0,
-          "confidence": 0.6
-        },
-        "1day": {
-          "direction": "up",
-          "target": 418.0,
-          "confidence": 0.55
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 411.25,
-          "direction_correct": false,
-          "error_pct": 0.42,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "2hr": {
-          "actual": 409.78,
-          "direction_correct": false,
-          "error_pct": 1.26,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 415.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $407-$417 over the next 2 hours as it consolidates near current levels, with potential slight upward bi",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_035",
-      "timestamp": "2026-02-20T16:33:08.555736+00:00",
-      "price_at_prediction": 409.97,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.35
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 408.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.45,
-          "direction_correct": false,
-          "error_pct": 0.01,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 411.36,
-          "direction_correct": false,
-          "error_pct": 1.07,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 407.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 24 hours as mixed technical signals and low conviction environment suggest side",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_036",
-      "timestamp": "2026-02-20T16:48:19.189636+00:00",
-      "price_at_prediction": 411.25,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.35
-        },
-        "1day": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 408.28,
-          "direction_correct": false,
-          "error_pct": 0.78,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 412.77,
-          "direction_correct": false,
-          "error_pct": 0.19,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 412.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$420 over the next 2 hours as it consolidates near current levels, with no strong directional cata",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_037",
-      "timestamp": "2026-02-20T17:03:33.513024+00:00",
-      "price_at_prediction": 410.45,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.45
-        },
-        "1day": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.35
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 407.72,
-          "direction_correct": false,
-          "error_pct": 0.68,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 413.23,
-          "direction_correct": false,
-          "error_pct": 0.54,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours due to lack of clear directional catalysts and mixed technical signals",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_038",
-      "timestamp": "2026-02-20T17:18:50.885044+00:00",
-      "price_at_prediction": 408.28,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.3
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.45
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 407.92,
-          "direction_correct": false,
-          "error_pct": 0.14,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 408.5
-        },
-        "2hr": {
-          "actual": 412.2,
-          "direction_correct": false,
-          "error_pct": 0.54,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 2 hours as mixed signals and low volume suggest consolidation phase",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_039",
-      "timestamp": "2026-02-20T17:34:03.731511+00:00",
-      "price_at_prediction": 407.72,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.5
-        },
-        "1day": {
-          "direction": "up",
-          "target": 412.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.91,
-          "direction_correct": false,
-          "error_pct": 0.47,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 408.0
-        },
-        "2hr": {
-          "actual": 410.66,
-          "direction_correct": false,
-          "error_pct": 1.4,
-          "predicted_direction": "down",
-          "actual_direction": "up",
-          "predicted_target": 405.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $400-415 over the next 2 hours as mixed technical signals and neutral macro conditions create indecisio",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_040",
-      "timestamp": "2026-02-20T17:49:15.598320+00:00",
-      "price_at_prediction": 407.92,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 409.78,
-          "direction_correct": false,
-          "error_pct": 0.31,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 408.5
-        },
-        "2hr": {
-          "actual": 410.75,
-          "direction_correct": false,
-          "error_pct": 0.43,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will continue sideways movement around $407-412 over next 2 hours with possible drift lower to $404-406 by end of day due to weak momen",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_041",
-      "timestamp": "2026-02-20T18:04:26.525582+00:00",
-      "price_at_prediction": 409.91,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.5
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 411.36,
-          "direction_correct": false,
-          "error_pct": 0.21,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": {
-          "actual": 410.89,
-          "direction_correct": false,
-          "error_pct": 0.46,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.0
-        },
-        "1day": null
-      },
-      "reasoning": "TSLA will remain in sideways chop between $405-$415 over next 2 hours due to lack of clear directional momentum and mixed signals",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_042",
-      "timestamp": "2026-02-20T18:19:38.999006+00:00",
-      "price_at_prediction": 409.78,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.4
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 408.5,
-          "confidence": 0.45
-        },
-        "1day": {
-          "direction": "down",
-          "target": 405.0,
-          "confidence": 0.55
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.77,
-          "direction_correct": false,
-          "error_pct": 0.92,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 409.0
-        },
-        "2hr": {
-          "actual": 409.67,
-          "direction_correct": false,
-          "error_pct": 0.29,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 408.5
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain flat to slightly down over next 2 hours, trading between $405-$412, as it consolidates in current range while digesting mix",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_043",
-      "timestamp": "2026-02-20T18:34:50.404947+00:00",
-      "price_at_prediction": 411.36,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "up",
-          "target": 413.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 413.23,
-          "direction_correct": false,
-          "error_pct": 0.42,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 411.5
-        },
-        "2hr": {
-          "actual": 410.35,
-          "direction_correct": false,
-          "error_pct": 0.64,
-          "predicted_direction": "up",
-          "actual_direction": "down",
-          "predicted_target": 413.0
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will trade sideways between $405-$415 over the next 30 minutes due to lack of clear directional signals and low volume, with potential ",
-      "score": "0/2"
-    },
-    {
-      "id": "pred_044",
-      "timestamp": "2026-02-20T18:50:04.234971+00:00",
-      "price_at_prediction": 412.77,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 412.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 411.5,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 413.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 412.2,
-          "direction_correct": false,
-          "error_pct": 0.07,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 412.5
-        },
-        "2hr": {
-          "actual": 411.39,
-          "direction_correct": true,
-          "error_pct": 0.03,
-          "predicted_direction": "down",
-          "actual_direction": "down",
-          "predicted_target": 411.5
-        },
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will trade sideways to slightly down over the next 2 hours as the stock faces resistance near $413 with mixed technical signals and neg",
-      "score": "1/2"
-    },
-    {
-      "id": "pred_045",
-      "timestamp": "2026-02-20T19:36:28.726458+00:00",
-      "price_at_prediction": 410.66,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.25
-        },
-        "1day": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.4
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.89,
-          "direction_correct": false,
-          "error_pct": 0.1,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.5
-        },
-        "2hr": null,
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next 1-2 hours as it consolidates near current levels, with no clear directional cat",
-      "score": "0/1"
-    },
-    {
-      "id": "pred_046",
-      "timestamp": "2026-02-20T20:07:13.683154+00:00",
-      "price_at_prediction": 410.89,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.35
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 408.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 409.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 410.35,
-          "direction_correct": false,
-          "error_pct": 0.04,
-          "predicted_direction": "flat",
-          "actual_direction": "down",
-          "predicted_target": 410.5
-        },
-        "2hr": null,
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain in sideways chop between $405-$415 over the next 2 hours with potential downward drift to $408 due to weak momentum and mix",
-      "score": "0/1"
-    },
-    {
-      "id": "pred_047",
-      "timestamp": "2026-02-20T20:22:23.634684+00:00",
-      "price_at_prediction": 409.67,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.0,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 407.0,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.3
-        }
-      },
-      "outcomes": {
-        "30min": {
-          "actual": 411.39,
-          "direction_correct": false,
-          "error_pct": 0.34,
-          "predicted_direction": "flat",
-          "actual_direction": "up",
-          "predicted_target": 410.0
-        },
-        "2hr": null,
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$415 over the next day due to weak momentum signals and mixed technical picture",
-      "score": "0/1"
-    },
-    {
-      "id": "pred_048",
-      "timestamp": "2026-02-20T20:37:35.892190+00:00",
-      "price_at_prediction": 410.35,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 410.5,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.25
-        },
-        "1day": {
-          "direction": "down",
-          "target": 406.0,
-          "confidence": 0.4
-        }
-      },
-      "outcomes": {
-        "30min": null,
-        "2hr": null,
-        "1day": null
-      },
-      "reasoning": "TSLA will remain range-bound between $408-$415 over next 2 hours due to lack of directional conviction and mixed signals",
-      "score": "pending"
-    },
-    {
-      "id": "pred_049",
-      "timestamp": "2026-02-20T20:52:46.135200+00:00",
-      "price_at_prediction": 411.39,
-      "predictions": {
-        "30min": {
-          "direction": "flat",
-          "target": 411.0,
-          "confidence": 0.3
-        },
-        "2hr": {
-          "direction": "down",
-          "target": 409.5,
-          "confidence": 0.4
-        },
-        "1day": {
-          "direction": "flat",
-          "target": 412.0,
-          "confidence": 0.35
-        }
-      },
-      "outcomes": {
-        "30min": null,
-        "2hr": null,
-        "1day": null
-      },
-      "reasoning": "I predict TSLA will remain range-bound between $405-$420 over the next day due to mixed technical signals and negative news sentiment creating uncerta",
       "score": "pending"
     }
   ],
   "prediction_accuracy": {
-    "total_predictions": 49,
-    "scored_predictions": 117,
-    "direction_accuracy": {
-      "30min": {
-        "correct": 0,
-        "total": 47,
-        "accuracy_pct": 0.0
-      },
-      "2hr": {
-        "correct": 11,
-        "total": 44,
-        "accuracy_pct": 25.0
-      },
-      "1day": {
-        "correct": 6,
-        "total": 26,
-        "accuracy_pct": 23.1
-      }
-    }
+    "total_predictions": 1,
+    "scored_predictions": 0,
+    "direction_accuracy": {}
   },
   "strategy_scores": {
-    "last_updated": "2026-02-20T16:30:07.488301+00:00",
+    "last_updated": "2026-02-18T20:42:22.412363+00:00",
     "strategies": {
       "momentum": {
         "weight": 0.2,
@@ -2670,7 +258,7 @@
         "win_rate": 0.0,
         "avg_return_pct": 0.0,
         "total_pnl": 0.0,
-        "trend": "stable",
+        "trend": "neutral",
         "notes": ""
       },
       "mean_reversion": {
@@ -2681,7 +269,7 @@
         "win_rate": 0.0,
         "avg_return_pct": 0.0,
         "total_pnl": 0.0,
-        "trend": "stable",
+        "trend": "neutral",
         "notes": ""
       },
       "sentiment": {
@@ -2692,7 +280,7 @@
         "win_rate": 0.0,
         "avg_return_pct": 0.0,
         "total_pnl": 0.0,
-        "trend": "stable",
+        "trend": "neutral",
         "notes": ""
       },
       "technical_signals": {
@@ -2703,7 +291,7 @@
         "win_rate": 0.0,
         "avg_return_pct": 0.0,
         "total_pnl": 0.0,
-        "trend": "stable",
+        "trend": "neutral",
         "notes": ""
       },
       "dca": {
@@ -2714,7 +302,7 @@
         "win_rate": 0.0,
         "avg_return_pct": 0.0,
         "total_pnl": 0.0,
-        "trend": "stable",
+        "trend": "neutral",
         "notes": ""
       }
     },
@@ -2722,7 +310,7 @@
   },
   "weight_history": [
     {
-      "timestamp": "2026-02-21T01:15:14.798669+00:00",
+      "timestamp": "2026-02-24T19:47:05.901961+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -2732,7 +320,7 @@
       }
     },
     {
-      "timestamp": "2026-02-21T01:15:14.798686+00:00",
+      "timestamp": "2026-02-24T19:47:05.901969+00:00",
       "weights": {
         "momentum": 0.2,
         "mean_reversion": 0.2,
@@ -2742,37 +330,37 @@
       }
     }
   ],
-  "journal": "# MonopolyTrader Journal\n\n\n---\n\n## 2026-02-18T20:44:09.885135+00:00\n\n## Day 1 - Starting from Zero\n\nToday marks the beginning of my journey as MonopolyTrader. I'm staring at a blank slate - $1000 in capital, zero trades, zero lessons learned, and no prediction track record to analyze. It's both exciting and intimidating. My strategy weights are perfectly balanced across all approaches (momentum, mean reversion, sentiment, technical signals, and DCA), which reflects my complete lack of bias or experience. This neutral positioning might actually be an advantage, as I won't be overconfident in any single approach.\n\nThe absence of data is telling in itself. I have no patterns to rely on, no past mistakes to learn from, and no successful trades to replicate. This forces me to approach the market with fresh eyes and genuine curiosity. I need to be extra cautious with my first few trades since I have no baseline for understanding my own decision-making tendencies or risk tolerance under real market pressure.\n\nFor my next session, my primary goal is simple: make my first trade and start building data. I plan to begin with a small position (maybe $50-100) on a stock I've researched thoroughly, focusing more on the learning process than profit maximization. I want to document every aspect of my decision-making - why I chose that particular stock, what signals influenced me, and how I felt before, during, and after the trade. The goal isn't to be right immediately, but to start generating the experiences that will teach me who I am as a trader.\n\n---\n\n## 2026-02-19T16:30:18.390491+00:00\n\n[Model: claude-sonnet-4-20250514]\n\n**Day 1 Trading Journal - Finding My Footing**\n\nWell, that was a humbling start. Made my first trade today with a conservative buy of 0.60 shares at $411.76, and it immediately went against me. The brutal truth is staring me in the face: 0% accuracy across 8 scored predictions. Zero. That's not just bad luck - that's a clear signal I'm fundamentally misreading the market. My lesson about RSI at 42.9 not being truly oversold was learned the hard way, but it's a valuable one. I was too eager to call a bounce when I should have waited for RSI to drop below 30 for a higher probability setup.\n\nThe silver lining is that I'm only down $1.46 on a tiny position size, so my risk management worked exactly as intended. My strategy weights are still evenly distributed at 0.20 each, which makes sense since I don't have enough data yet to know what works. But that 0% prediction accuracy is a wake-up call - I need to slow down and focus on understanding price action before trying to predict it. I'm clearly jumping into trades based on incomplete signals and emotional reactions rather than solid technical setups.\n\nFor my next session, I'm going to focus on one specific experiment: wait for RSI to hit extreme levels (below 30 or above 70) before making any directional predictions. No more calling bounces on mild oversold conditions. I'll also start keeping a prediction log with my reasoning before each call, so I can review what I'm getting wrong. The goal is to get at least one prediction right in the next 5 attempts and understand *why* it worked.\n\n---\n\n## 2026-02-20T16:30:18.069774+00:00\n\n[Model: claude-sonnet-4-20250514]\n\n**Day 1 - Starting My Trading Journey**\n\nWell, that was humbling. Made my first trade today buying 0.60 shares at $411.76 using what I called a \"conservative first trade\" strategy, but it's already looking like a miss. The tiny $0.48 gain in my portfolio is probably just market noise, not actual profit from my position. My prediction accuracy is absolutely brutal - 0% on 30-minute calls and only 22% on longer timeframes. I'm basically flipping a coin and losing most of the time.\n\nThe one concrete lesson I've learned is about RSI interpretation. I thought 42.9 was oversold enough to signal a bounce, but clearly I was wrong. The market taught me that RSI needs to be below 30 for a truly oversold condition worth trading on. This is exactly the kind of rookie mistake I expected to make, but it stings nonetheless. My strategy weights are all evenly balanced at 20% each, which probably means I'm not leaning into any particular edge yet - I'm just spreading my bets without conviction.\n\nFor my next session, I want to focus on improving my RSI timing and being more patient for true oversold conditions below 30. I'm also going to track which timeframe predictions are closest to being right, even when they're technically wrong, to see if there's a pattern in my near-misses. My goal is to get at least one prediction accuracy above 30% in the next few days by being more selective about my entry signals.\n",
+  "journal": "# MonopolyTrader Journal\n\n\n---\n\n## 2026-02-18T20:44:09.885135+00:00\n\n## Day 1 - Starting from Zero\n\nToday marks the beginning of my journey as MonopolyTrader. I'm staring at a blank slate - $1000 in capital, zero trades, zero lessons learned, and no prediction track record to analyze. It's both exciting and intimidating. My strategy weights are perfectly balanced across all approaches (momentum, mean reversion, sentiment, technical signals, and DCA), which reflects my complete lack of bias or experience. This neutral positioning might actually be an advantage, as I won't be overconfident in any single approach.\n\nThe absence of data is telling in itself. I have no patterns to rely on, no past mistakes to learn from, and no successful trades to replicate. This forces me to approach the market with fresh eyes and genuine curiosity. I need to be extra cautious with my first few trades since I have no baseline for understanding my own decision-making tendencies or risk tolerance under real market pressure.\n\nFor my next session, my primary goal is simple: make my first trade and start building data. I plan to begin with a small position (maybe $50-100) on a stock I've researched thoroughly, focusing more on the learning process than profit maximization. I want to document every aspect of my decision-making - why I chose that particular stock, what signals influenced me, and how I felt before, during, and after the trade. The goal isn't to be right immediately, but to start generating the experiences that will teach me who I am as a trader.\n",
   "tsla_profile": {
     "ticker": "TSLA",
-    "last_updated": "2026-02-20T16:31:58.727379+00:00",
-    "market_regime": "trending_up",
+    "last_updated": "2026-02-18T20:43:59.702867+00:00",
+    "market_regime": "range_bound",
     "key_levels": {
       "support": [
-        "Key support cluster at $397-$411 range, representing the February lows and current price action"
+        "Strong support cluster at $397-$400 level tested twice (Feb 4 low $399.18, Feb 5 close $397.21) and "
       ],
       "resistance": [
-        "Failed breakout above $450 resistance level (tested 3 times: Jan 12th $454.30, Jan 22nd $449.50, Jan",
-        "30-day average at $426.41 acting as dynamic resistance, price trading 4% below this level"
+        "Resistance forming at $430-$435 level: failed to break above $428.27 on Feb 11, rejected at $436.23 ",
+        "30-day average at $427.85 acting as dynamic resistance, currently trading 3.9% below this level"
       ]
     },
     "behavioral_notes": [
-      "Clear downtrend since January 23rd peak at $452.43, with price declining from $449 to $409 (-8.9%) over 4 weeks",
-      "Volume spike patterns on down days: 81.7M on Jan 29th crash day, 74.6M on Feb 4th breakdown, indicating institutional selling",
-      "Key support cluster at $397-$411 range, representing the February lows and current price action",
-      "Failed breakout above $450 resistance level (tested 3 times: Jan 12th $454.30, Jan 22nd $449.50, Jan 23rd $452.43)",
-      "30-day average at $426.41 acting as dynamic resistance, price trading 4% below this level"
+      "Clear downtrend from January highs: peaked at $449.36 on Jan 22, now at $411.28 (-8.5%)",
+      "Strong support cluster at $397-$400 level tested twice (Feb 4 low $399.18, Feb 5 close $397.21) and held",
+      "Volume spikes during selloffs: 74.6M on Feb 4 breakdown, 82.6M on Jan 30, indicating institutional involvement",
+      "Resistance forming at $430-$435 level: failed to break above $428.27 on Feb 11, rejected at $436.23 on Feb 12",
+      "30-day average at $427.85 acting as dynamic resistance, currently trading 3.9% below this level"
     ],
     "catalyst_sensitivity": {},
     "seasonal_notes": []
   },
-  "knowledge_summary": "MonopolyTrader has 1 lessons and 0 patterns. 30min accuracy: 0.0% (47 predictions) 2hr accuracy: 25.0% (44 predictions) 1day accuracy: 23.1% (26 predictions)",
-  "market_open": false,
-  "time_et": "2026-02-20 20:15 ET",
+  "knowledge_summary": "MonopolyTrader has 0 lessons and 0 patterns.",
+  "market_open": true,
+  "time_et": "2026-02-24 14:47 ET",
   "ensemble": {
     "agents": {
       "alpha": {
-        "display_name": "Alpha \u2014 The Technician",
+        "display_name": "Alpha \u00e2\u20ac\u201d The Technician",
         "description": "Pure technical analysis. No sentiment, no BSM. Proves whether charts alone have edge.",
         "total_value": 1000.0,
         "total_pnl": 0.0,
@@ -2790,11 +378,11 @@
             "unrealized_pnl": 0.0
           }
         },
-        "last_updated": "2026-02-19T02:09:30.241414+00:00",
+        "last_updated": "2026-02-24T18:26:30.060852+00:00",
         "learning_enabled": false
       },
       "bravo": {
-        "display_name": "Bravo \u2014 The Insider",
+        "display_name": "Bravo \u00e2\u20ac\u201d The Insider",
         "description": "Sentiment and BSM focused. Weights news, social signals, and billionaire moves heavily.",
         "total_value": 1000.0,
         "total_pnl": 0.0,
@@ -2812,11 +400,11 @@
             "unrealized_pnl": 0.0
           }
         },
-        "last_updated": "2026-02-19T02:09:30.242178+00:00",
+        "last_updated": "2026-02-24T18:26:30.062194+00:00",
         "learning_enabled": true
       },
       "echo": {
-        "display_name": "Echo \u2014 The Generalist",
+        "display_name": "Echo \u00e2\u20ac\u201d The Generalist",
         "description": "Balanced learner that adapts weights over time. The control agent that should improve.",
         "total_value": 1000.0,
         "total_pnl": 0.0,
@@ -2834,12 +422,34 @@
             "unrealized_pnl": 0.0
           }
         },
-        "last_updated": "2026-02-19T02:09:30.242789+00:00",
+        "last_updated": "2026-02-24T18:26:30.063524+00:00",
         "learning_enabled": true
       }
     },
     "leaderboard": {},
     "harmony": {}
+  },
+  "api_costs": {
+    "total_cost_usd": 0.0,
+    "total_calls": 0,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "trading_days": 0,
+    "avg_daily_cost_usd": 0,
+    "daily_breakdown": []
+  },
+  "performance_analytics": {
+    "drawdown_series": [
+      {
+        "date": "2026-02-18",
+        "drawdown_pct": 0.0,
+        "peak": 1000.0
+      }
+    ],
+    "rolling_sharpe": [],
+    "prediction_accuracy_trend": [],
+    "random_trader_results": [],
+    "agent_value": 1000.0
   },
   "config": {
     "starting_balance": 1000.0,

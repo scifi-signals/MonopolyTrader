@@ -20,8 +20,8 @@ from .portfolio import (
     update_market_price, get_portfolio_summary, calculate_position_size,
     apply_gap_risk_reduction,
 )
-from .strategies import evaluate_all_strategies, aggregate_signals
-from .agent import make_decision
+from .strategies import evaluate_all_strategies, aggregate_signals, calculate_signal_balance
+from .agent import make_decision, make_decision_multi_step
 from .knowledge_base import (
     initialize as init_kb, get_strategy_scores, get_relevant_knowledge,
     get_knowledge_summary,
@@ -130,10 +130,17 @@ def run_cycle():
         knowledge = get_relevant_knowledge(market_data)
 
         # 10. Call agent for decision (with macro/regime context)
-        decision = make_decision(
-            market_data, signals, aggregate, portfolio, knowledge,
-            macro_gate=macro_gate, regime=regime,
-        )
+        if config.get("multi_step_reasoning"):
+            logger.info("Using multi-step reasoning mode")
+            decision = make_decision_multi_step(
+                market_data, signals, aggregate, portfolio, knowledge,
+                macro_gate=macro_gate, regime=regime,
+            )
+        else:
+            decision = make_decision(
+                market_data, signals, aggregate, portfolio, knowledge,
+                macro_gate=macro_gate, regime=regime,
+            )
         action = decision.get("action", "HOLD")
         shares = decision.get("shares", 0)
 
@@ -180,6 +187,12 @@ def run_cycle():
         scored = review_predictions(current_price)
         if scored:
             logger.info(f"Scored {len(scored)} predictions")
+
+        # 15b. Score pending HOLD counterfactuals
+        try:
+            evaluate_hold_counterfactuals(current_price)
+        except Exception as e:
+            logger.warning(f"Hold counterfactual scoring failed: {e}")
 
         # 16. Review recent unreviewed trades
         asyncio.run(_review_recent_trades(current_price))
@@ -230,7 +243,7 @@ def _save_research_request(topic: str):
 
 
 def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
-    """Log a HOLD decision with counterfactual tracking data."""
+    """Log a HOLD decision with counterfactual tracking data and signal balance."""
     from .utils import load_json, save_json
     path = DATA_DIR / "hold_log.json"
     holds = load_json(path, default=[])
@@ -240,6 +253,12 @@ def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
         non_hold = [s for s in signals if s.action != "HOLD"]
         if non_hold:
             strongest = max(non_hold, key=lambda s: s.confidence)
+
+    # Calculate signal balance at time of HOLD
+    signal_balance = calculate_signal_balance(signals) if signals else None
+
+    # Extract hold_analysis from agent decision
+    hold_analysis = decision.get("hold_analysis")
 
     entry = {
         "timestamp": iso_now(),
@@ -253,6 +272,8 @@ def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
             "strategy": strongest.strategy,
             "confidence": strongest.confidence,
         } if strongest else None,
+        "signal_balance": signal_balance,
+        "hold_analysis": hold_analysis,
         "regime": market_data.get("regime", {}),
         "counterfactual_scored": False,
         "counterfactual_outcome": None,
@@ -262,6 +283,107 @@ def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
     if len(holds) > 200:
         holds = holds[-200:]
     save_json(path, holds)
+
+
+def evaluate_hold_counterfactuals(current_price: float):
+    """Score past HOLD decisions against actual price movement.
+
+    For each unscored HOLD older than 2 hours, calculate what would have
+    happened if the strongest ignored signal had been followed:
+    - If strongest was BUY: did price go up? (missed opportunity)
+    - If strongest was SELL: did price go down? (missed opportunity)
+    - Calculate hypothetical P&L based on a standard position size.
+    """
+    from .utils import load_json, save_json
+    from datetime import datetime, timezone
+
+    path = DATA_DIR / "hold_log.json"
+    holds = load_json(path, default=[])
+    if not holds:
+        return
+
+    now = datetime.now(timezone.utc)
+    updated = False
+    config = load_config()
+    portfolio_value = load_portfolio().get("total_value", 1000)
+    standard_trade_pct = config.get("risk_params", {}).get("max_single_trade_pct", 0.20)
+    hypothetical_trade_value = portfolio_value * standard_trade_pct * 0.5  # Half of max
+
+    for hold in holds:
+        if hold.get("counterfactual_scored"):
+            continue
+
+        hold_time = datetime.fromisoformat(hold["timestamp"])
+        elapsed_hours = (now - hold_time).total_seconds() / 3600
+
+        # Score after 2 hours
+        if elapsed_hours < 2:
+            continue
+
+        price_at_hold = hold.get("price_at_hold", 0)
+        if price_at_hold <= 0:
+            hold["counterfactual_scored"] = True
+            updated = True
+            continue
+
+        strongest = hold.get("strongest_signal_ignored")
+        if not strongest:
+            hold["counterfactual_scored"] = True
+            hold["counterfactual_outcome"] = {
+                "verdict": "no_signal",
+                "note": "No non-HOLD signal was present.",
+            }
+            updated = True
+            continue
+
+        price_change = current_price - price_at_hold
+        price_change_pct = (price_change / price_at_hold) * 100
+
+        # Calculate hypothetical shares
+        hypothetical_shares = hypothetical_trade_value / price_at_hold if price_at_hold > 0 else 0
+
+        ignored_action = strongest.get("action", "HOLD")
+        if ignored_action == "BUY":
+            # Would buying have been profitable?
+            hypothetical_pnl = hypothetical_shares * price_change
+            was_right = price_change > 0
+            verdict = "missed_gain" if was_right else "correct_hold"
+        elif ignored_action == "SELL":
+            # Would selling have been profitable?
+            hypothetical_pnl = hypothetical_shares * (-price_change)
+            was_right = price_change < 0
+            verdict = "missed_gain" if was_right else "correct_hold"
+        else:
+            hypothetical_pnl = 0
+            was_right = False
+            verdict = "neutral"
+
+        hold["counterfactual_scored"] = True
+        hold["counterfactual_outcome"] = {
+            "price_after_2hr": round(current_price, 2),
+            "price_change_pct": round(price_change_pct, 3),
+            "ignored_action": ignored_action,
+            "ignored_confidence": strongest.get("confidence", 0),
+            "hypothetical_pnl": round(hypothetical_pnl, 2),
+            "was_signal_right": was_right,
+            "verdict": verdict,
+        }
+        updated = True
+
+        if was_right:
+            logger.info(
+                f"HOLD counterfactual: {ignored_action} signal was RIGHT — "
+                f"missed ${abs(hypothetical_pnl):.2f} "
+                f"(price moved {price_change_pct:+.2f}%)"
+            )
+        else:
+            logger.info(
+                f"HOLD counterfactual: {ignored_action} signal was WRONG — "
+                f"HOLD was correct (price moved {price_change_pct:+.2f}%)"
+            )
+
+    if updated:
+        save_json(path, holds)
 
 
 def _check_earnings_blackout(ticker: str, config: dict = None) -> bool:

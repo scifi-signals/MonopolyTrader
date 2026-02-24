@@ -47,6 +47,7 @@
     "technical_signals",
     "dca"
   ],
+  "multi_step_reasoning": false,
   "learning": {
     "research_on_startup": true,
     "review_after_every_trade": true,

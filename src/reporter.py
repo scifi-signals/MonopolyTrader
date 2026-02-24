@@ -125,11 +125,13 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Milestones
     milestones = load_json(DATA_DIR / "milestones.json", default=[])
 
-    # Hold log summary
+    # Hold log summary with counterfactual stats
     hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
+    cf_stats = _calculate_counterfactual_stats(hold_log)
     hold_summary = {
         "total_holds": len(hold_log),
-        "recent": hold_log[-5:] if hold_log else [],
+        "recent": hold_log[-10:] if hold_log else [],
+        "counterfactual_stats": cf_stats,
     }
 
     # Ensemble data
@@ -259,6 +261,36 @@ def _build_weight_history(scores: dict) -> list:
     history.append({"timestamp": iso_now(), "weights": current_weights})
 
     return history
+
+
+def _calculate_counterfactual_stats(hold_log: list) -> dict:
+    """Calculate aggregate stats on HOLD counterfactual outcomes."""
+    scored = [h for h in hold_log if h.get("counterfactual_scored")]
+    if not scored:
+        return {"total_scored": 0}
+
+    correct_holds = 0
+    missed_gains = 0
+    total_missed_pnl = 0.0
+
+    for h in scored:
+        cf = h.get("counterfactual_outcome", {})
+        if not isinstance(cf, dict):
+            continue
+        verdict = cf.get("verdict", "")
+        if verdict == "correct_hold":
+            correct_holds += 1
+        elif verdict == "missed_gain":
+            missed_gains += 1
+            total_missed_pnl += abs(cf.get("hypothetical_pnl", 0))
+
+    return {
+        "total_scored": len(scored),
+        "correct_holds": correct_holds,
+        "missed_gains": missed_gains,
+        "total_missed_pnl": round(total_missed_pnl, 2),
+        "correct_hold_pct": round(correct_holds / len(scored) * 100, 1) if scored else 0,
+    }
 
 
 def _build_scoreboard(predictions: list) -> list:

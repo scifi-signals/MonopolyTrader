@@ -329,6 +329,69 @@ def evaluate_all_strategies(
     return signals
 
 
+def calculate_signal_balance(signals: list[StrategySignal]) -> dict:
+    """Calculate a weighted signal balance on a -1 (SELL) to +1 (BUY) scale.
+
+    Returns a dict with the overall balance, per-strategy breakdown, and
+    a human-readable summary suitable for agent prompts and HOLD analysis.
+    """
+    if not signals:
+        return {
+            "balance": 0.0,
+            "breakdown": {},
+            "buy_pressure": 0.0,
+            "sell_pressure": 0.0,
+            "summary": "No signals available.",
+        }
+
+    total_weight = sum(s.weight for s in signals)
+    if total_weight == 0:
+        total_weight = 1.0
+
+    buy_pressure = 0.0
+    sell_pressure = 0.0
+    breakdown = {}
+
+    for s in signals:
+        # Map each signal to -1..+1 scale weighted by confidence and strategy weight
+        if s.action == "BUY":
+            value = s.confidence * s.weight / total_weight
+            buy_pressure += value
+        elif s.action == "SELL":
+            value = -s.confidence * s.weight / total_weight
+            sell_pressure += abs(value)
+        else:
+            value = 0.0
+
+        breakdown[s.strategy] = {
+            "action": s.action,
+            "confidence": round(s.confidence, 3),
+            "weight": round(s.weight, 3),
+            "contribution": round(value, 4),
+        }
+
+    balance = round(buy_pressure - sell_pressure, 4)
+
+    # Build summary
+    parts = []
+    for name, b in sorted(breakdown.items(), key=lambda x: abs(x[1]["contribution"]), reverse=True):
+        if b["contribution"] != 0:
+            direction = "BUY" if b["contribution"] > 0 else "SELL"
+            parts.append(f"{name}: {direction} {abs(b['contribution']):.3f}")
+        else:
+            parts.append(f"{name}: HOLD (neutral)")
+
+    summary = f"Signal Balance: {balance:+.4f} (buy={buy_pressure:.3f}, sell={sell_pressure:.3f}). {'; '.join(parts)}"
+
+    return {
+        "balance": balance,
+        "breakdown": breakdown,
+        "buy_pressure": round(buy_pressure, 4),
+        "sell_pressure": round(sell_pressure, 4),
+        "summary": summary,
+    }
+
+
 def aggregate_signals(signals: list[StrategySignal]) -> StrategySignal:
     """Weighted combination of all signals into a single recommendation."""
     if not signals:

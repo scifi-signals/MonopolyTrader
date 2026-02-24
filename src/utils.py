@@ -89,6 +89,99 @@ def format_pct(value: float) -> str:
     return f"{value:+.2f}%"
 
 
+def call_ai_with_fallback(
+    system: str,
+    user: str,
+    max_tokens: int = 1500,
+    config: dict = None,
+) -> tuple[str, str]:
+    """Call an AI model with automatic fallback between providers.
+
+    Tries Anthropic (direct) first, then OpenRouter as fallback.
+    Returns (response_text, model_id).
+
+    Requires ANTHROPIC_API_KEY in env. For fallback, set OPENROUTER_API_KEY.
+    """
+    if config is None:
+        config = load_config()
+
+    model = config.get("anthropic_model", "claude-sonnet-4-20250514")
+    logger = logging.getLogger("ai_fallback")
+
+    # Provider 1: Anthropic direct
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not anthropic_key:
+        for path in ["anthropic_api_key.txt", "../anthropic_api_key.txt"]:
+            try:
+                with open(path) as f:
+                    anthropic_key = f.read().strip()
+                    break
+            except FileNotFoundError:
+                continue
+
+    if anthropic_key:
+        try:
+            from anthropic import Anthropic
+            client = Anthropic(api_key=anthropic_key)
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            text = response.content[0].text.strip()
+            return text, model
+        except Exception as e:
+            logger.warning(f"Anthropic direct failed: {e}")
+
+    # Provider 2: OpenRouter fallback
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        for path in ["openrouter_api_key.txt", "../openrouter_api_key.txt"]:
+            try:
+                with open(path) as f:
+                    openrouter_key = f.read().strip()
+                    break
+            except FileNotFoundError:
+                continue
+
+    if openrouter_key:
+        try:
+            import httpx
+            # Map model name to OpenRouter model ID
+            or_model_map = {
+                "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
+                "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5",
+            }
+            or_model = or_model_map.get(model, f"anthropic/{model}")
+
+            resp = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": or_model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "max_tokens": max_tokens,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"].strip()
+            logger.info(f"OpenRouter fallback succeeded with {or_model}")
+            return text, f"openrouter/{or_model}"
+        except Exception as e:
+            logger.error(f"OpenRouter fallback also failed: {e}")
+
+    raise RuntimeError("All AI providers failed. Check API keys and connectivity.")
+
+
 def generate_id(prefix: str, existing_ids: list = None) -> str:
     """Generate a sequential ID like txn_001, lesson_012, etc."""
     if not existing_ids:

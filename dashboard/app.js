@@ -333,8 +333,21 @@ function renderHoldLog() {
     section.style.display = 'block';
 
     const recent = holds.recent || [];
+    const stats = holds.counterfactual_stats || {};
 
-    let html = `<p style="color:var(--text2)">Total HOLD decisions: ${holds.total_holds}</p>`;
+    // Summary stats
+    let html = `<div class="hold-summary">
+        <span>Total HOLDs: <strong>${holds.total_holds}</strong></span>`;
+    if (stats.total_scored > 0) {
+        const correctPct = stats.total_scored > 0 ? ((stats.correct_holds / stats.total_scored) * 100).toFixed(0) : 0;
+        html += `<span>Correct HOLDs: <strong>${correctPct}%</strong> (${stats.correct_holds}/${stats.total_scored})</span>`;
+        html += `<span>Missed gains: <strong>${stats.missed_gains || 0}</strong></span>`;
+        if (stats.total_missed_pnl !== undefined) {
+            html += `<span>Missed P&L: <strong class="${pnlClass(-stats.total_missed_pnl)}">${fmt(Math.abs(stats.total_missed_pnl))}</strong></span>`;
+        }
+    }
+    html += '</div>';
+
     html += '<div class="hold-list">';
 
     recent.forEach(h => {
@@ -343,9 +356,56 @@ function renderHoldLog() {
         const signalText = strongest
             ? `${strongest.action} from ${strongest.strategy} (conf=${strongest.confidence?.toFixed(2)})`
             : 'none';
-        const counterfactual = h.counterfactual_outcome
-            ? `<span class="${pnlClass(h.counterfactual_outcome)}">Outcome: ${fmtPct(h.counterfactual_outcome)}</span>`
-            : '<span style="color:var(--text2)">pending</span>';
+
+        // Counterfactual rendering with rich data
+        let counterfactualHtml;
+        const cf = h.counterfactual_outcome;
+        if (cf && typeof cf === 'object' && cf.verdict) {
+            const verdictCls = cf.verdict === 'correct_hold' ? 'positive' : cf.verdict === 'missed_gain' ? 'negative' : 'neutral';
+            const verdictLabel = cf.verdict === 'correct_hold' ? 'CORRECT HOLD' : cf.verdict === 'missed_gain' ? 'MISSED GAIN' : cf.verdict.toUpperCase();
+            counterfactualHtml = `
+                <div class="cf-result ${verdictCls}">
+                    <span class="cf-verdict">${verdictLabel}</span>
+                    <span>Price moved ${fmtPct(cf.price_change_pct || 0)}</span>
+                    ${cf.hypothetical_pnl ? `<span>Hypothetical P&L: <strong>${fmt(cf.hypothetical_pnl)}</strong></span>` : ''}
+                </div>`;
+        } else if (typeof cf === 'number') {
+            // Legacy format
+            counterfactualHtml = `<span class="${pnlClass(cf)}">Outcome: ${fmtPct(cf)}</span>`;
+        } else {
+            counterfactualHtml = '<span style="color:var(--text2)">pending</span>';
+        }
+
+        // Signal balance bar
+        let signalBalanceHtml = '';
+        const sb = h.signal_balance;
+        if (sb && sb.balance !== undefined) {
+            const bal = sb.balance;
+            const pct = Math.min(Math.abs(bal) * 100, 50);
+            const side = bal >= 0 ? 'right' : 'left';
+            const barColor = bal > 0 ? '#22c55e' : bal < 0 ? '#ef4444' : '#6b7280';
+            signalBalanceHtml = `
+                <div class="signal-balance-bar">
+                    <span class="sb-label">SELL</span>
+                    <div class="sb-track">
+                        <div class="sb-center"></div>
+                        <div class="sb-fill" style="width:${pct}%;${side === 'right' ? 'left:50%' : 'right:50%'};background:${barColor}"></div>
+                    </div>
+                    <span class="sb-label">BUY</span>
+                    <span class="sb-value">${bal >= 0 ? '+' : ''}${bal.toFixed(3)}</span>
+                </div>`;
+        }
+
+        // Hold analysis
+        let holdAnalysisHtml = '';
+        const ha = h.hold_analysis;
+        if (ha && typeof ha === 'object') {
+            holdAnalysisHtml = `<div class="hold-analysis">`;
+            if (ha.opportunity_cost) holdAnalysisHtml += `<div class="ha-item"><strong>Opportunity cost:</strong> ${ha.opportunity_cost}</div>`;
+            if (ha.downside_protection) holdAnalysisHtml += `<div class="ha-item"><strong>Downside protection:</strong> ${ha.downside_protection}</div>`;
+            if (ha.decision_boundary) holdAnalysisHtml += `<div class="ha-item"><strong>Decision boundary:</strong> ${ha.decision_boundary}</div>`;
+            holdAnalysisHtml += '</div>';
+        }
 
         html += `
             <div class="hold-card">
@@ -354,10 +414,15 @@ function renderHoldLog() {
                     <span>at ${price}</span>
                     <span class="badge badge-hold">HOLD</span>
                 </div>
+                ${signalBalanceHtml}
                 <div class="hold-details">
                     <span>Reason: ${h.reason || 'agent_decision'}</span>
                     <span>Signal ignored: ${signalText}</span>
-                    <span>Counterfactual: ${counterfactual}</span>
+                </div>
+                ${holdAnalysisHtml}
+                <div class="hold-counterfactual">
+                    <span style="color:var(--text2);font-size:12px">Counterfactual:</span>
+                    ${counterfactualHtml}
                 </div>
             </div>`;
     });

@@ -5,7 +5,8 @@ from pathlib import Path
 
 from .utils import (
     load_config, load_json, save_json, iso_now, format_currency,
-    is_market_open, now_et, DATA_DIR, DASHBOARD_DIR, setup_logging
+    is_market_open, now_et, DATA_DIR, DASHBOARD_DIR, setup_logging,
+    get_cost_summary,
 )
 from .market_data import get_current_price, get_price_history
 from .portfolio import (
@@ -125,6 +126,13 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Milestones
     milestones = load_json(DATA_DIR / "milestones.json", default=[])
 
+    # API costs
+    cost_summary = {}
+    try:
+        cost_summary = get_cost_summary(days=30)
+    except Exception as e:
+        logger.warning(f"Cost summary failed: {e}")
+
     # Hold log summary with counterfactual stats
     hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
     cf_stats = _calculate_counterfactual_stats(hold_log)
@@ -175,6 +183,7 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "market_open": is_market_open(),
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),
         "ensemble": ensemble_data,
+        "api_costs": cost_summary,
         "config": {
             "starting_balance": config["starting_balance"],
             "strategies_enabled": config["strategies_enabled"],

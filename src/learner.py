@@ -3,7 +3,7 @@
 import json
 import os
 from anthropic import Anthropic
-from .utils import load_config, iso_now, setup_logging
+from .utils import load_config, load_json, save_json, iso_now, setup_logging, DATA_DIR
 from .knowledge_base import (
     get_lessons, add_lesson, get_patterns, add_pattern,
     get_predictions, update_prediction, get_strategy_scores,
@@ -316,6 +316,188 @@ def _apply_confidence_adjustments(adjustments: dict, trade: dict):
     update_strategy_scores(scores)
 
 
+# --- HOLD Counterfactual Learning ---
+
+HOLD_REVIEW_SYSTEM = """You are the learning module of MonopolyTrader. Your job is to analyze HOLD decisions where the agent chose NOT to act, and determine what should be learned.
+
+You receive a HOLD decision with its counterfactual outcome — what WOULD have happened if the agent had followed the strongest ignored signal instead of holding.
+
+Be specific. If the agent kept holding through a clear signal and missed money, identify exactly what the agent should watch for next time. If the hold was correct, identify what made it a good decision so the agent can recognize similar situations.
+
+IMPORTANT: Categorize every lesson into EXACTLY ONE of these categories:
+- signal_correct: The ignored signal was right — agent should have acted
+- signal_wrong: The ignored signal was wrong — HOLD was the right call
+- regime_mismatch: The signal would have worked in a different regime but not this one
+- noise_trade: The ignored signal was noise — there was no real opportunity
+- correlated_market_move: Price moved with the market, not on the signal
+- risk_sizing_error: Signal was right but agent was right to hold due to position/risk limits
+
+Respond with JSON:
+{
+  "what_signal_said": "<summary of the ignored signal>",
+  "what_actually_happened": "<what the price actually did>",
+  "was_hold_correct": <true/false>,
+  "why": "<specific analysis of why the hold was right or wrong>",
+  "lesson": "<one clear, actionable lesson about when to hold vs act>",
+  "category": "<exactly one of the categories above>",
+  "confidence_adjustment": {
+    "<strategy_name>": <float adjustment, e.g. +0.03 if signal was right and ignored, -0.02 if signal was wrong>
+  }
+}"""
+
+
+async def review_hold_outcomes() -> list[dict]:
+    """Review scored hold counterfactuals and extract lessons.
+
+    This is the critical missing piece — without this, the agent collects
+    data about whether its HOLDs were right or wrong but never LEARNS from it.
+    """
+    hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
+    if not hold_log:
+        return []
+
+    # Find scored holds that haven't been reviewed yet
+    unreviewed = [
+        h for h in hold_log
+        if h.get("counterfactual_scored")
+        and h.get("counterfactual_outcome")
+        and not h.get("lesson_extracted")
+    ]
+
+    if not unreviewed:
+        return []
+
+    # Only review missed gains and a sample of correct holds
+    # (we learn more from mistakes than from being right)
+    missed = [h for h in unreviewed if h.get("counterfactual_outcome", {}).get("verdict") == "missed_gain"]
+    correct = [h for h in unreviewed if h.get("counterfactual_outcome", {}).get("verdict") == "correct_hold"]
+
+    # Review all missed gains, but only 1 in 3 correct holds (avoid noise)
+    to_review = missed + correct[::3]
+
+    lessons_created = []
+    for hold in to_review:
+        lesson = await _review_single_hold(hold)
+        if lesson:
+            lessons_created.append(lesson)
+            # Mark as reviewed
+            hold["lesson_extracted"] = True
+            hold["linked_lesson"] = lesson["id"]
+
+    # Mark remaining correct holds as reviewed too (no lesson needed)
+    for h in unreviewed:
+        if not h.get("lesson_extracted"):
+            h["lesson_extracted"] = True
+
+    # Save updated hold log
+    save_json(DATA_DIR / "hold_log.json", hold_log)
+    logger.info(f"Hold review: {len(missed)} missed gains, {len(correct)} correct holds, {len(lessons_created)} lessons created")
+    return lessons_created
+
+
+async def _review_single_hold(hold: dict) -> dict | None:
+    """Review a single hold decision and extract a lesson."""
+    cf = hold.get("counterfactual_outcome", {})
+    strongest = hold.get("strongest_signal_ignored", {})
+    balance = hold.get("signal_balance", {})
+    analysis = hold.get("hold_analysis", {})
+
+    user_prompt = f"""Review this HOLD decision and its counterfactual outcome:
+
+HOLD Decision:
+- Time: {hold.get('timestamp', 'unknown')}
+- Price at hold: ${hold.get('price_at_hold', 0):.2f}
+- Reason: {hold.get('reason', 'agent_decision')}
+- Regime: {json.dumps(hold.get('regime', {}), default=str)}
+
+Strongest Ignored Signal:
+- Action: {strongest.get('action', 'N/A')}
+- Strategy: {strongest.get('strategy', 'N/A')}
+- Confidence: {strongest.get('confidence', 0):.2f}
+
+Signal Balance: {json.dumps(balance, default=str) if balance else 'N/A'}
+
+Agent's Hold Justification:
+- Opportunity cost: {analysis.get('opportunity_cost', 'Not stated') if analysis else 'Not stated'}
+- Downside protection: {analysis.get('downside_protection', 'Not stated') if analysis else 'Not stated'}
+- Decision boundary: {analysis.get('decision_boundary', 'Not stated') if analysis else 'Not stated'}
+
+COUNTERFACTUAL OUTCOME (what actually happened):
+- Price after 2hr: ${cf.get('price_after_2hr', 0):.2f}
+- Price change: {cf.get('price_change_pct', 0):+.3f}%
+- Ignored signal was: {'RIGHT' if cf.get('was_signal_right') else 'WRONG'}
+- Hypothetical P&L if acted: ${cf.get('hypothetical_pnl', 0):.2f}
+- Verdict: {cf.get('verdict', 'unknown')}
+
+What should the agent learn about WHEN to hold vs WHEN to act?"""
+
+    try:
+        raw, model_ver = _call_claude(HOLD_REVIEW_SYSTEM, user_prompt)
+        review = _parse_json(raw)
+
+        category = review.get("category", "noise_trade")
+        if category not in LESSON_CATEGORIES:
+            category = "noise_trade"
+
+        lesson = {
+            "linked_trade": f"hold_{hold.get('timestamp', 'unknown')[:19]}",
+            "source": "hold_counterfactual",
+            "what_i_predicted": review.get("what_signal_said", ""),
+            "what_actually_happened": review.get("what_actually_happened", ""),
+            "why_i_was_wrong": review.get("why", ""),
+            "lesson": review.get("lesson", ""),
+            "category": category,
+            "confidence_adjustment": review.get("confidence_adjustment", {}),
+            "weight": 0.8 if cf.get("verdict") == "missed_gain" else 0.6,
+            "decay_rate": 0.95,
+            "times_validated": 0,
+            "times_contradicted": 0,
+            "model_version": model_ver,
+        }
+
+        saved = add_lesson(lesson)
+
+        # Apply confidence adjustments
+        adjustments = review.get("confidence_adjustment", {})
+        if adjustments:
+            _apply_hold_confidence_adjustments(adjustments, hold)
+
+        logger.info(
+            f"Hold lesson: {saved['id']} — {cf.get('verdict', '?')}, "
+            f"category={category}, hold_correct={review.get('was_hold_correct')}"
+        )
+        return saved
+
+    except Exception as e:
+        logger.error(f"Hold review failed: {e}")
+        return None
+
+
+def _apply_hold_confidence_adjustments(adjustments: dict, hold: dict):
+    """Apply strategy confidence adjustments from a hold review.
+
+    Key difference from trade adjustments: if the agent ignored a correct signal,
+    BOOST that strategy's weight (it was right, we should listen to it more).
+    """
+    scores = get_strategy_scores()
+    strategies = scores.get("strategies", {})
+
+    for strategy_name, adj in adjustments.items():
+        if strategy_name in strategies:
+            s = strategies[strategy_name]
+            old_weight = s["weight"]
+            s["weight"] = round(max(0.05, min(0.40, s["weight"] + adj)), 4)
+            logger.info(f"Hold adj: {strategy_name} weight {old_weight:.3f} -> {s['weight']:.3f} ({adj:+.3f})")
+
+    # Normalize
+    total = sum(s["weight"] for s in strategies.values())
+    if total > 0:
+        for s in strategies.values():
+            s["weight"] = round(s["weight"] / total, 4)
+
+    update_strategy_scores(scores)
+
+
 # --- Prediction Scoring ---
 
 def review_predictions(current_price: float) -> list[dict]:
@@ -380,13 +562,14 @@ def review_predictions(current_price: float) -> list[dict]:
 
 # --- Pattern Discovery ---
 
-PATTERN_SYSTEM = """You are the pattern discovery module of MonopolyTrader. Analyze the agent's trade history and lessons to identify recurring patterns in TSLA's behavior or in the agent's own decision-making.
+PATTERN_SYSTEM = """You are the pattern discovery module of MonopolyTrader. Analyze the agent's trade history, HOLD decisions, and lessons to identify recurring patterns in TSLA's behavior or in the agent's own decision-making.
 
 Look for:
 1. TSLA behavior patterns (e.g., "drops after X event", "bounces from Y level")
 2. Agent behavior patterns (e.g., "overconfident on momentum trades in choppy markets")
-3. Timing patterns (e.g., "better accuracy in afternoon vs morning")
-4. Strategy patterns (e.g., "mean reversion works best when RSI < 25")
+3. HOLD patterns (e.g., "agent holds too much when momentum signals fire", "HOLDs during high-volatility regime are usually correct")
+4. Timing patterns (e.g., "better accuracy in afternoon vs morning")
+5. Strategy patterns (e.g., "mean reversion works best when RSI < 25")
 
 Return a JSON array of discovered patterns (empty array if none found):
 [{
@@ -399,11 +582,13 @@ Return a JSON array of discovered patterns (empty array if none found):
 
 
 async def discover_patterns() -> list[dict]:
-    """Analyze trade history + lessons looking for recurring patterns."""
+    """Analyze trade history + hold decisions + lessons for recurring patterns."""
     transactions = load_transactions()
     lessons = get_lessons()
+    hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
+    scored_holds = [h for h in hold_log if h.get("counterfactual_scored")]
 
-    if len(transactions) < 3 and len(lessons) < 2:
+    if len(transactions) < 3 and len(lessons) < 2 and len(scored_holds) < 3:
         logger.info("Not enough data for pattern discovery yet")
         return []
 
@@ -417,16 +602,34 @@ async def discover_patterns() -> list[dict]:
             f"hypothesis: {t.get('hypothesis', 'N/A')[:100]}"
         )
 
+    # Summarize scored HOLD decisions
+    hold_summary = []
+    for h in scored_holds[-15:]:
+        cf = h.get("counterfactual_outcome", {})
+        sig = h.get("strongest_signal_ignored", {})
+        hold_summary.append(
+            f"  HOLD @ ${h.get('price_at_hold', 0):.2f} "
+            f"| ignored {sig.get('action', '?')} from {sig.get('strategy', '?')} "
+            f"(conf={sig.get('confidence', 0):.2f}) "
+            f"| verdict: {cf.get('verdict', '?')} "
+            f"| hypo P&L: ${cf.get('hypothetical_pnl', 0):.2f} "
+            f"| regime: {h.get('regime', {}).get('trend', '?')}/{h.get('regime', {}).get('volatility', '?')}"
+        )
+
     lesson_summary = []
     for l in lessons[-15:]:
+        source_tag = " [from HOLD]" if l.get("source") == "hold_counterfactual" else ""
         lesson_summary.append(
-            f"  {l['id']}: [{l.get('category', 'other')}] {l.get('lesson', 'N/A')[:120]}"
+            f"  {l['id']}: [{l.get('category', 'other')}]{source_tag} {l.get('lesson', 'N/A')[:120]}"
         )
 
     user_prompt = f"""Analyze this trading history for patterns:
 
 TRADES ({len(transactions)} total, showing last {min(20, len(transactions))}):
-{chr(10).join(trade_summary)}
+{chr(10).join(trade_summary) if trade_summary else "  No trades yet."}
+
+HOLD DECISIONS ({len(scored_holds)} scored, showing last {min(15, len(scored_holds))}):
+{chr(10).join(hold_summary) if hold_summary else "  No scored holds yet."}
 
 LESSONS ({len(lessons)} total, showing last {min(15, len(lessons))}):
 {chr(10).join(lesson_summary)}
@@ -434,7 +637,7 @@ LESSONS ({len(lessons)} total, showing last {min(15, len(lessons))}):
 PREDICTION ACCURACY:
 {json.dumps(get_prediction_accuracy(), indent=2)}
 
-Find recurring patterns. Be specific — cite trade IDs and lessons as evidence."""
+Find recurring patterns. Look especially at HOLD vs ACT patterns — is the agent holding too much? Too little? Are there specific conditions where HOLDs are consistently right or wrong?"""
 
     try:
         raw, model_ver = _call_claude(PATTERN_SYSTEM, user_prompt, max_tokens=2000)
@@ -564,6 +767,26 @@ async def write_journal_entry(portfolio: dict) -> str:
             f"correct: {review.get('was_correct', 'unreviewed')})"
         )
 
+    # HOLD performance summary
+    hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
+    scored_holds = [h for h in hold_log if h.get("counterfactual_scored")]
+    missed = [h for h in scored_holds if h.get("counterfactual_outcome", {}).get("verdict") == "missed_gain"]
+    correct = [h for h in scored_holds if h.get("counterfactual_outcome", {}).get("verdict") == "correct_hold"]
+    hold_lessons = [l for l in lessons if l.get("source") == "hold_counterfactual"]
+
+    hold_section = "  No scored holds yet."
+    if scored_holds:
+        total_missed_pnl = sum(
+            abs(h.get("counterfactual_outcome", {}).get("hypothetical_pnl", 0))
+            for h in missed
+        )
+        hold_section = (
+            f"  Total scored: {len(scored_holds)}\n"
+            f"  Correct holds: {len(correct)} ({len(correct)/len(scored_holds)*100:.0f}%)\n"
+            f"  Missed gains: {len(missed)} (est. ${total_missed_pnl:.2f} left on table)\n"
+            f"  Lessons from holds: {len(hold_lessons)}"
+        )
+
     user_prompt = f"""Write a journal entry based on this data:
 
 Portfolio: ${portfolio.get('total_value', 0):.2f} (P&L: ${portfolio.get('total_pnl', 0):.2f}, {portfolio.get('total_pnl_pct', 0):+.2f}%)
@@ -573,14 +796,20 @@ Knowledge: {summary}
 Recent trades:
 {chr(10).join(trade_lines) if trade_lines else "  No trades yet."}
 
+HOLD Performance (am I holding too much or too little?):
+{hold_section}
+
 Recent lessons:
 {chr(10).join(f"  {l.get('lesson', '')[:100]}" for l in lessons[-5:]) if lessons else "  None yet."}
+
+Recent HOLD lessons:
+{chr(10).join(f"  {l.get('lesson', '')[:100]}" for l in hold_lessons[-3:]) if hold_lessons else "  None yet."}
 
 Prediction accuracy: {json.dumps(accuracy, indent=2)}
 
 Strategy weights: {json.dumps({k: f"{v['weight']:.2f} ({v['trend']})" for k, v in scores.get('strategies', {}).items()}, indent=2)}
 
-Reflect on your performance. What's working? What's not? What will you try next?"""
+Reflect on your performance. Include your HOLD decision quality — are you holding too cautiously? Missing opportunities? Or are your holds mostly correct? What will you try next?"""
 
     try:
         entry, model_ver = _call_claude(JOURNAL_SYSTEM, user_prompt, max_tokens=1000)
@@ -604,18 +833,22 @@ async def run_learning_cycle(current_price: float, portfolio: dict):
     for trade in unreviewed:
         await review_trade(trade, current_price)
 
-    # 2. Score pending predictions
+    # 2. Review HOLD counterfactual outcomes (THE MISSING PIECE)
+    hold_lessons = await review_hold_outcomes()
+    logger.info(f"Hold reviews: {len(hold_lessons)} lessons from HOLD decisions")
+
+    # 3. Score pending predictions
     scored = review_predictions(current_price)
     logger.info(f"Scored {len(scored)} predictions")
 
-    # 3. Discover patterns
+    # 4. Discover patterns (now includes hold data)
     patterns = await discover_patterns()
     logger.info(f"Discovered {len(patterns)} new patterns")
 
-    # 4. Evolve strategy weights
+    # 5. Evolve strategy weights
     await evolve_strategy_weights()
 
-    # 5. Write journal
+    # 6. Write journal (now includes hold performance)
     await write_journal_entry(portfolio)
 
     logger.info("Learning cycle complete")

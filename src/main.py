@@ -29,6 +29,7 @@ from .knowledge_base import (
 from .learner import (
     review_trade, review_predictions, discover_patterns,
     evolve_strategy_weights, write_journal_entry, run_learning_cycle,
+    review_hold_outcomes,
 )
 from .researcher import run_full_research
 

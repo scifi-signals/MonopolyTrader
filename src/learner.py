@@ -285,10 +285,15 @@ What went right or wrong? What should the agent learn?"""
                 break
         save_transactions(transactions)
 
-        # Apply confidence adjustments
+        # Apply confidence adjustments — but ONLY if the skeptic validated the lesson.
+        # If the skeptic found a simpler explanation (e.g., SPY correlation), the
+        # confidence adjustment is based on a flawed causal story and should be skipped.
+        skeptic_validated = lesson.get("skeptic_review", {}).get("validated", True)
         adjustments = review.get("confidence_adjustment", {})
-        if adjustments:
+        if adjustments and skeptic_validated:
             _apply_confidence_adjustments(adjustments, trade)
+        elif adjustments and not skeptic_validated:
+            logger.info(f"Skipping weight adjustments — skeptic invalidated lesson")
 
         # Update reliability of any patterns this trade referenced
         _update_pattern_reliability(trade, review.get("was_correct", False))
@@ -438,6 +443,13 @@ async def review_hold_outcomes() -> list[dict]:
     # Review all missed gains, but only 1 in 3 correct holds (avoid noise)
     to_review = missed + correct[::3]
 
+    # Cap per-cycle reviews to prevent batch dumps from polluting the knowledge base.
+    # If a backlog builds up (e.g., first deploy), spread reviews across multiple cycles.
+    MAX_HOLD_REVIEWS_PER_CYCLE = 10
+    if len(to_review) > MAX_HOLD_REVIEWS_PER_CYCLE:
+        logger.info(f"Hold review backlog: {len(to_review)} pending, capping at {MAX_HOLD_REVIEWS_PER_CYCLE}")
+        to_review = to_review[:MAX_HOLD_REVIEWS_PER_CYCLE]
+
     lessons_created = []
     for hold in to_review:
         lesson = await _review_single_hold(hold)
@@ -447,9 +459,11 @@ async def review_hold_outcomes() -> list[dict]:
             hold["lesson_extracted"] = True
             hold["linked_lesson"] = lesson["id"]
 
-    # Mark remaining correct holds as reviewed too (no lesson needed)
-    for h in unreviewed:
-        if not h.get("lesson_extracted"):
+    # Mark skipped correct holds as reviewed (only those not in to_review).
+    # Don't mark holds that are still in the backlog waiting for the next cycle.
+    reviewed_timestamps = {h.get("timestamp") for h in to_review}
+    for h in correct:
+        if not h.get("lesson_extracted") and h.get("timestamp") not in reviewed_timestamps:
             h["lesson_extracted"] = True
 
     # Save updated hold log
@@ -551,10 +565,15 @@ What should the agent learn about WHEN to hold vs WHEN to act?"""
 
         saved = add_lesson(lesson)
 
-        # Apply confidence adjustments
+        # Apply confidence adjustments — but ONLY if the skeptic validated the lesson.
+        # A skeptic-rejected hold lesson means the price move had a simpler explanation
+        # (e.g., SPY correlation), so adjusting weights based on it would be noise.
+        skeptic_validated = lesson.get("skeptic_review", {}).get("validated", True)
         adjustments = review.get("confidence_adjustment", {})
-        if adjustments:
+        if adjustments and skeptic_validated:
             _apply_hold_confidence_adjustments(adjustments, hold)
+        elif adjustments and not skeptic_validated:
+            logger.info(f"Skipping hold weight adjustments — skeptic invalidated lesson")
 
         logger.info(
             f"Hold lesson: {saved['id']} — {cf.get('verdict', '?')}, "

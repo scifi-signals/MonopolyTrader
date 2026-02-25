@@ -170,6 +170,7 @@ def run_cycle():
         # 14. Execute or log HOLD
         if action in ("BUY", "SELL") and shares > 0:
             decision["_vix"] = vix  # Pass VIX for slippage calculation
+            decision["_regime"] = regime  # Pass regime for transaction record
             result = execute_trade(action, shares, current_price, decision)
             if result["status"] == "executed":
                 txn = result["transaction"]

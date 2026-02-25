@@ -194,13 +194,20 @@ async def review_trade(trade: dict, current_price: float) -> dict | None:
     price_change = current_price - trade["price"]
     price_change_pct = (price_change / trade["price"]) * 100
 
+    # Include strategy signals if stored in the transaction
+    signals_text = ""
+    signals = trade.get("signals", {})
+    if signals:
+        sig_lines = [f"  {k}: {v}" for k, v in signals.items()]
+        signals_text = "\nStrategy signals at time of trade:\n" + "\n".join(sig_lines)
+
     user_prompt = f"""Review this trade:
 
 Trade: {trade['action']} {trade['shares']:.4f} TSLA @ ${trade['price']:.2f}
 Time: {trade['timestamp']}
 Strategy: {trade.get('strategy', 'unknown')}
 Confidence: {trade.get('confidence', 'N/A')}
-
+{signals_text}
 Hypothesis: {trade.get('hypothesis', 'None stated')}
 Reasoning: {trade.get('reasoning', 'None stated')}
 
@@ -259,17 +266,26 @@ What went right or wrong? What should the agent learn?"""
                 lesson["weight"] = 0.5  # Downweight unvalidated lessons
                 logger.info(f"Skeptic downweighted lesson: {skeptic.get('simpler_explanation', '')[:80]}")
 
-        # Add regime tag
-        try:
-            from .market_data import classify_regime
-            regime = classify_regime()
+        # Add regime tag — use regime stored at trade time if available,
+        # otherwise fall back to current regime (less accurate for old trades)
+        trade_regime = trade.get("regime", {})
+        if trade_regime and trade_regime.get("trend"):
             lesson["regime"] = {
-                "trend": regime.get("trend", "unknown"),
-                "volatility": regime.get("volatility", "unknown"),
-                "vix": regime.get("vix", 0),
+                "trend": trade_regime.get("trend", "unknown"),
+                "volatility": trade_regime.get("volatility", "unknown"),
+                "vix": trade_regime.get("vix", 0),
             }
-        except Exception:
-            lesson["regime"] = {"trend": "unknown", "volatility": "unknown", "vix": 0}
+        else:
+            try:
+                from .market_data import classify_regime
+                regime = classify_regime()
+                lesson["regime"] = {
+                    "trend": regime.get("trend", "unknown"),
+                    "volatility": regime.get("volatility", "unknown"),
+                    "vix": regime.get("vix", 0),
+                }
+            except Exception:
+                lesson["regime"] = {"trend": "unknown", "volatility": "unknown", "vix": 0}
 
         saved_lesson = add_lesson(lesson)
 

@@ -215,6 +215,7 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         "reasoning": decision.get("reasoning", "") if decision else "",
         "signals": decision.get("signals", {}) if decision else {},
         "knowledge_applied": decision.get("knowledge_applied", []) if decision else [],
+        "regime": decision.get("_regime", {}) if decision else {},
         "review": None,
     }
 
@@ -476,44 +477,3 @@ def save_snapshot():
     logger.info(f"Saved snapshot: {today} — value ${portfolio['total_value']:.2f}")
 
 
-def get_performance_vs_benchmark(ticker: str = None) -> dict:
-    """Compare portfolio returns vs buy-and-hold TSLA."""
-    config = load_config()
-    ticker = ticker or config["ticker"]
-    portfolio = load_portfolio()
-
-    portfolio_return = portfolio["total_pnl_pct"]
-
-    # Load snapshots to get start date
-    snapshots = sorted(SNAPSHOTS_DIR.glob("*.json"))
-    if not snapshots:
-        return {
-            "portfolio_return_pct": portfolio_return,
-            "buyhold_return_pct": 0,
-            "alpha_pct": 0,
-            "note": "No snapshots yet — benchmark comparison available after first trading day",
-        }
-
-    # Get price at portfolio creation to calculate buy-and-hold
-    from .market_data import get_price_history
-    try:
-        hist = get_price_history(ticker, period="3mo", interval="1d")
-        first_snapshot = load_json(snapshots[0])
-        start_date = first_snapshot.get("date", "")
-
-        # Find the price on start date
-        start_prices = hist.loc[hist.index.strftime("%Y-%m-%d") == start_date]
-        if not start_prices.empty:
-            start_price = float(start_prices["Close"].iloc[0])
-            current_price = float(hist["Close"].iloc[-1])
-            buyhold_return = ((current_price - start_price) / start_price) * 100
-        else:
-            buyhold_return = 0
-    except Exception:
-        buyhold_return = 0
-
-    return {
-        "portfolio_return_pct": round(portfolio_return, 2),
-        "buyhold_return_pct": round(buyhold_return, 2),
-        "alpha_pct": round(portfolio_return - buyhold_return, 2),
-    }

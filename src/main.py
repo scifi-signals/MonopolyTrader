@@ -436,19 +436,41 @@ def evaluate_hold_counterfactuals(current_price: float):
 
 
 def _check_earnings_blackout(ticker: str, config: dict = None) -> bool:
-    """Check if we're within earnings blackout window."""
+    """Check if we're within earnings blackout window.
+
+    Reads upcoming_earnings dates saved by researcher.py (via yfinance)
+    and returns True if any earnings date falls within the blackout window.
+    """
     if config is None:
         config = load_config()
     blackout_hours = config.get("risk_params", {}).get("earnings_blackout_hours", 48)
     if blackout_hours <= 0:
         return False
 
+    from datetime import datetime, timezone, timedelta
     from .utils import load_json, KNOWLEDGE_DIR
+
     earnings = load_json(KNOWLEDGE_DIR / "research" / "earnings_history.json", default={})
-    # Look for upcoming earnings dates in the findings
-    # Simple heuristic: check if any finding mentions "upcoming" or a near date
-    # For now, this is a stub that returns False — earnings dates need to be
-    # explicitly tracked. Will be populated by researcher.py.
+    upcoming = earnings.get("upcoming_earnings", [])
+    if not upcoming:
+        return False
+
+    now = datetime.now(timezone.utc)
+    blackout_start = now
+    blackout_end = now + timedelta(hours=blackout_hours)
+
+    for date_str in upcoming:
+        try:
+            earnings_dt = datetime.fromisoformat(date_str)
+            if earnings_dt.tzinfo is None:
+                earnings_dt = earnings_dt.replace(tzinfo=timezone.utc)
+            # If earnings fall between now and now + blackout_hours, we're in blackout
+            if blackout_start <= earnings_dt <= blackout_end:
+                logger.info(f"Earnings blackout: {ticker} earnings on {earnings_dt.isoformat()} within {blackout_hours}hr window")
+                return True
+        except (ValueError, TypeError):
+            continue
+
     return False
 
 

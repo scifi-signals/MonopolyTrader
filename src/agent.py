@@ -30,6 +30,8 @@ RISK RULES (v3 — you MUST follow these):
 
 When deciding trade size, be conservative early on. The system will cap your shares based on ATR sizing. Small positions let you learn without blowing up.
 
+PREDICTION TRACK RECORD: Your prediction accuracy is shown in the knowledge section. Use it. If a strategy has >60% accuracy, weight your confidence higher on trades using it. If a strategy is below 45%, reduce confidence on those predictions. Don't make high-confidence predictions using strategies where your track record is poor.
+
 Be a scientific instrument, not a storyteller. Base decisions on data, not narratives.
 
 HOLD IS AN ACTIVE DECISION. When you decide to HOLD, you are choosing NOT to act despite available signals. This is a deliberate choice with opportunity cost. You MUST justify every HOLD with the same rigor as a BUY or SELL.
@@ -172,7 +174,13 @@ def _format_knowledge(knowledge: dict) -> str:
         parts.append("")
         parts.append("Known Patterns:")
         for p in patterns:
-            parts.append(f"  [{p['id']}] {p.get('name', 'N/A')} (reliability: {p.get('reliability', 'N/A')})")
+            validated = p.get("times_validated", 0)
+            contradicted = p.get("times_contradicted", 0)
+            reliability = p.get("reliability", "N/A")
+            if validated or contradicted:
+                parts.append(f"  [{p['id']}] {p.get('name', 'N/A')} (reliability: {reliability}, validated {validated}x, contradicted {contradicted}x)")
+            else:
+                parts.append(f"  [{p['id']}] {p.get('name', 'N/A')} (reliability: {reliability}, untested)")
             parts.append(f"    {p.get('description', '')}")
 
     accuracy = knowledge.get("prediction_accuracy", {})
@@ -181,6 +189,19 @@ def _format_knowledge(knowledge: dict) -> str:
         parts.append("Your Prediction Accuracy:")
         for horizon, data in accuracy.get("direction_accuracy", {}).items():
             parts.append(f"  {horizon}: {data['accuracy_pct']}% ({data['correct']}/{data['total']})")
+
+        # Per-strategy accuracy breakdown
+        strat_acc = accuracy.get("strategy_accuracy", {})
+        if strat_acc:
+            parts.append("Accuracy by Strategy:")
+            for strat, data in strat_acc.items():
+                pct = data["accuracy_pct"]
+                label = ""
+                if pct < 45:
+                    label = " — poor track record, low confidence warranted"
+                elif pct >= 60:
+                    label = " — your strongest predictor"
+                parts.append(f"  {strat}: {pct}% ({data['correct']}/{data['total']}){label}")
     else:
         parts.append("")
         parts.append("No scored predictions yet.")

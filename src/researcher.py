@@ -119,10 +119,48 @@ Provide specific, actionable trading rules based on earnings patterns."""
         findings["model_version"] = model_ver
         add_research("earnings_history", findings)
         logger.info(f"Earnings research complete: {len(findings.get('key_findings', []))} findings")
+
+        # Fetch actual upcoming earnings dates via yfinance
+        _fetch_upcoming_earnings(ticker)
+
         return findings
     except Exception as e:
         logger.error(f"Earnings research failed: {e}")
         return {}
+
+
+def _fetch_upcoming_earnings(ticker: str = "TSLA"):
+    """Fetch upcoming earnings dates via yfinance and save to earnings_history.json."""
+    try:
+        import yfinance as yf
+        from datetime import datetime, timezone
+
+        stock = yf.Ticker(ticker)
+        dates = stock.get_earnings_dates(limit=4)
+        if dates is not None and not dates.empty:
+            upcoming = []
+            now = datetime.now(timezone.utc)
+            for dt in dates.index:
+                # Convert to timezone-aware UTC datetime
+                if dt.tzinfo is None:
+                    dt = dt.tz_localize("UTC")
+                else:
+                    dt = dt.tz_convert("UTC")
+                # Only keep future dates
+                if dt >= now:
+                    upcoming.append(dt.isoformat())
+            if upcoming:
+                # Merge into existing earnings_history.json
+                research = get_research("earnings_history")
+                research["upcoming_earnings"] = sorted(upcoming)
+                research["upcoming_earnings_updated"] = iso_now()
+                from .utils import save_json, KNOWLEDGE_DIR
+                save_json(KNOWLEDGE_DIR / "research" / "earnings_history.json", research)
+                logger.info(f"Saved {len(upcoming)} upcoming earnings dates for {ticker}")
+        else:
+            logger.info(f"No earnings dates returned by yfinance for {ticker}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch upcoming earnings dates: {e}")
 
 
 async def research_catalyst_events(ticker: str = "TSLA") -> dict:

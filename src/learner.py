@@ -8,7 +8,7 @@ from .knowledge_base import (
     get_lessons, add_lesson, get_patterns, add_pattern,
     get_predictions, update_prediction, get_strategy_scores,
     update_strategy_scores, append_journal, get_knowledge_summary,
-    get_prediction_accuracy,
+    get_prediction_accuracy, PATTERNS_PATH,
 )
 from .portfolio import load_transactions, save_transactions
 
@@ -290,6 +290,9 @@ What went right or wrong? What should the agent learn?"""
         if adjustments:
             _apply_confidence_adjustments(adjustments, trade)
 
+        # Update reliability of any patterns this trade referenced
+        _update_pattern_reliability(trade, review.get("was_correct", False))
+
         logger.info(
             f"Reviewed trade {trade['id']}: lesson={saved_lesson['id']}, "
             f"correct={review.get('was_correct')}, weight={lesson['weight']}"
@@ -336,6 +339,44 @@ def _apply_confidence_adjustments(adjustments: dict, trade: dict):
                 )
 
     update_strategy_scores(scores)
+
+
+# --- Pattern Reliability Updates ---
+
+def _update_pattern_reliability(trade: dict, was_correct: bool):
+    """Update reliability of patterns referenced by a trade.
+
+    Reads knowledge_applied from the trade to find pattern IDs.
+    Bumps reliability up for correct trades, down for incorrect ones.
+    """
+    knowledge_applied = trade.get("knowledge_applied", [])
+    if not knowledge_applied:
+        return
+
+    pattern_ids = [k for k in knowledge_applied if k.startswith("pattern_")]
+    if not pattern_ids:
+        return
+
+    patterns = get_patterns()
+    updated = False
+    for pattern in patterns:
+        if pattern.get("id") in pattern_ids:
+            old_reliability = pattern.get("reliability", 0.5)
+            if was_correct:
+                pattern["reliability"] = min(1.0, round(old_reliability + 0.05, 4))
+                pattern["times_validated"] = pattern.get("times_validated", 0) + 1
+            else:
+                pattern["reliability"] = max(0.0, round(old_reliability - 0.08, 4))
+                pattern["times_contradicted"] = pattern.get("times_contradicted", 0) + 1
+            pattern["last_tested"] = iso_now()
+            updated = True
+            logger.info(
+                f"Pattern {pattern['id']} reliability: {old_reliability:.2f} -> {pattern['reliability']:.2f} "
+                f"({'validated' if was_correct else 'contradicted'})"
+            )
+
+    if updated:
+        save_json(PATTERNS_PATH, patterns)
 
 
 # --- HOLD Counterfactual Learning ---

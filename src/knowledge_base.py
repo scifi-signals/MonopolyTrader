@@ -288,13 +288,14 @@ def get_relevant_knowledge(market_context: dict = None) -> dict:
 
 
 def get_prediction_accuracy() -> dict:
-    """Calculate rolling accuracy stats."""
+    """Calculate rolling accuracy stats, including per-strategy breakdown."""
     predictions = get_predictions()
     if not predictions:
         return {
             "total_predictions": 0,
             "scored_predictions": 0,
             "direction_accuracy": {},
+            "strategy_accuracy": {},
             "note": "No predictions yet",
         }
 
@@ -314,11 +315,54 @@ def get_prediction_accuracy() -> dict:
                 "accuracy_pct": round(sum(results) / len(results) * 100, 1),
             }
 
+    # Per-strategy accuracy: link predictions to trades via linked_trade
+    strategy_accuracy = _compute_strategy_accuracy(predictions)
+
     return {
         "total_predictions": len(predictions),
         "scored_predictions": sum(len(v) for v in horizons.values()),
         "direction_accuracy": accuracy,
+        "strategy_accuracy": strategy_accuracy,
     }
+
+
+def _compute_strategy_accuracy(predictions: list) -> dict:
+    """Compute prediction accuracy broken down by strategy.
+
+    Links predictions to their trades (via linked_trade field), looks up
+    the strategy from the transaction, and aggregates accuracy per strategy.
+    """
+    from .portfolio import load_transactions
+
+    # Build a map of trade_id -> strategy
+    transactions = load_transactions()
+    trade_strategy = {t["id"]: t.get("strategy", "unknown") for t in transactions}
+
+    strategy_results: dict[str, list[bool]] = {}
+    for pred in predictions:
+        trade_id = pred.get("linked_trade")
+        if not trade_id:
+            continue
+        strategy = trade_strategy.get(trade_id, "unknown")
+        if strategy == "unknown":
+            continue
+
+        # Aggregate all scored horizons for this prediction
+        outcomes = pred.get("outcomes", {})
+        for horizon in ("30min", "2hr", "1day"):
+            outcome = outcomes.get(horizon)
+            if outcome and outcome.get("direction_correct") is not None:
+                strategy_results.setdefault(strategy, []).append(outcome["direction_correct"])
+
+    result = {}
+    for strategy, results in strategy_results.items():
+        if results:
+            result[strategy] = {
+                "correct": sum(results),
+                "total": len(results),
+                "accuracy_pct": round(sum(results) / len(results) * 100, 1),
+            }
+    return result
 
 
 def get_knowledge_summary() -> str:

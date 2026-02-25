@@ -286,6 +286,7 @@ def _save_latest_cycle(decision: dict, signals, aggregate, market_data: dict, re
         "hold_analysis": decision.get("hold_analysis"),
         "predictions": decision.get("predictions"),
         "knowledge_applied": decision.get("knowledge_applied", []),
+        "multi_step_trace": decision.get("_multi_step"),
     }
 
     save_json(DATA_DIR / "latest_cycle.json", cycle_data)
@@ -521,14 +522,39 @@ async def run_daily_research():
             from .benchmarks import BenchmarkTracker
             bt_check = BenchmarkTracker()
             comparison = bt_check.get_comparison(portfolio["total_value"])
+            # Compute Sharpe ratio and max drawdown from daily snapshots
+            import numpy as np
+            snapshot_files = sorted((DATA_DIR / "snapshots").glob("*.json"))
+            sharpe_ratio = 0.0
+            max_drawdown_pct = 0.0
+            if len(snapshot_files) >= 2:
+                values = []
+                for sf in snapshot_files:
+                    snap = load_json(sf, default={})
+                    values.append(snap.get("total_value", 1000))
+                values = np.array(values, dtype=float)
+                daily_returns = np.diff(values) / values[:-1]
+                if len(daily_returns) > 1 and np.std(daily_returns) > 0:
+                    sharpe_ratio = float(np.mean(daily_returns) / np.std(daily_returns) * np.sqrt(252))
+                peak = np.maximum.accumulate(values)
+                drawdowns = (peak - values) / peak
+                max_drawdown_pct = float(np.max(drawdowns) * 100)
+
+            # Get prediction accuracy
+            from .knowledge_base import get_prediction_accuracy
+            pred_acc = get_prediction_accuracy()
+            pred_2hr = pred_acc.get("direction_accuracy", {}).get("2hr", {})
+            prediction_accuracy_pct = pred_2hr.get("accuracy_pct", 0)
+
             milestone_metrics = {
-                "trading_days": len(list((DATA_DIR / "snapshots").glob("*.json"))),
+                "trading_days": len(snapshot_files),
                 "total_trades": portfolio.get("total_trades", 0),
                 "percentile_vs_random": comparison.get("percentile_vs_random", 0),
                 "beats_buy_hold_tsla": comparison.get("beats_buy_hold_tsla", False),
-                "prediction_accuracy_pct": 0,
+                "prediction_accuracy_pct": prediction_accuracy_pct,
                 "total_return_pct": portfolio.get("total_pnl_pct", 0),
-                "max_drawdown_pct": 0,
+                "sharpe_ratio": round(sharpe_ratio, 3),
+                "max_drawdown_pct": round(max_drawdown_pct, 2),
             }
             mc = MilestoneChecker()
             new_milestones = mc.check_all(milestone_metrics)
@@ -538,14 +564,27 @@ async def run_daily_research():
         except Exception as e:
             logger.warning(f"Milestone check failed: {e}")
 
-        # 6. Save daily snapshot
+        # 6. Run ensemble analysis (if multiple agents configured)
+        try:
+            from .meta_learner import daily_ensemble_analysis, write_ensemble_journal
+            from .ensemble import list_agents
+            if list_agents():
+                analysis = await daily_ensemble_analysis()
+                await write_ensemble_journal()
+                logger.info(f"Ensemble analysis complete: {len(analysis.get('leaderboard_summary', []))} agents")
+            else:
+                logger.info("Single-agent mode — skipping ensemble analysis")
+        except Exception as e:
+            logger.warning(f"Ensemble analysis failed: {e}")
+
+        # 7. Save daily snapshot
         save_snapshot()
 
-        # 7. Generate dashboard (full=True for daily benchmark recalculation)
+        # 8. Generate dashboard (full=True for daily benchmark recalculation)
         from .reporter import generate_dashboard_data
         generate_dashboard_data(full=True)
 
-        # 6. Summary
+        # 9. Summary
         summary = get_portfolio_summary()
         logger.info(
             f"Daily summary: Value={format_currency(summary['total_value'])} "

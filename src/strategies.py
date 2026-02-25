@@ -423,34 +423,52 @@ def aggregate_signals(signals: list[StrategySignal]) -> StrategySignal:
             "weight": s.weight, "reasoning": s.reasoning,
         }
 
-    # Normalize by total weight
-    if total_weight > 0:
-        buy_score /= total_weight
-        sell_score /= total_weight
+    # Normalize by weight of ACTIVE signals only. Strategies that return HOLD
+    # are abstaining, not voting against. Their weight shouldn't dilute real signals.
+    # Floor at 40% of total weight so one weak strategy can't dominate.
+    active_weight = sum(
+        s.weight for s in signals if s.action != "HOLD"
+    )
+    divisor = max(active_weight, total_weight * 0.4) if total_weight > 0 else 1.0
+
+    if divisor > 0:
+        buy_score /= divisor
+        sell_score /= divisor
 
     net = buy_score - sell_score
 
     # Need a meaningful threshold to act
     threshold = 0.10
+    active_count = len(buy_reasons) + len(sell_reasons)
 
     if net > threshold:
-        reasoning = f"Weighted BUY signal ({net:.3f}). Buyers: {', '.join(buy_reasons)}"
+        reasoning = (
+            f"Weighted BUY signal ({net:.3f}, {active_count} active of {len(signals)}). "
+            f"Buyers: {', '.join(buy_reasons)}"
+        )
         if sell_reasons:
             reasoning += f". Dissenters: {', '.join(sell_reasons)}"
-        return StrategySignal("BUY", round(min(net * 2, 1.0), 2), 1.0, "aggregate", reasoning, all_signals)
+        if hold_reasons:
+            reasoning += f". Abstaining: {', '.join(hold_reasons)}"
+        return StrategySignal("BUY", round(min(net, 1.0), 2), 1.0, "aggregate", reasoning, all_signals)
 
     elif net < -threshold:
-        reasoning = f"Weighted SELL signal ({net:.3f}). Sellers: {', '.join(sell_reasons)}"
+        reasoning = (
+            f"Weighted SELL signal ({net:.3f}, {active_count} active of {len(signals)}). "
+            f"Sellers: {', '.join(sell_reasons)}"
+        )
         if buy_reasons:
             reasoning += f". Dissenters: {', '.join(buy_reasons)}"
-        return StrategySignal("SELL", round(min(abs(net) * 2, 1.0), 2), 1.0, "aggregate", reasoning, all_signals)
+        if hold_reasons:
+            reasoning += f". Abstaining: {', '.join(hold_reasons)}"
+        return StrategySignal("SELL", round(min(abs(net), 1.0), 2), 1.0, "aggregate", reasoning, all_signals)
 
     else:
-        reasoning = f"Mixed signals (net: {net:.3f}). "
+        reasoning = f"Mixed/weak signals (net: {net:.3f}, {active_count} active). "
         if buy_reasons:
             reasoning += f"Buy: {', '.join(buy_reasons)}. "
         if sell_reasons:
             reasoning += f"Sell: {', '.join(sell_reasons)}. "
         if hold_reasons:
-            reasoning += f"Hold: {', '.join(hold_reasons)}."
+            reasoning += f"Abstaining: {', '.join(hold_reasons)}."
         return StrategySignal("HOLD", round(abs(net), 2), 1.0, "aggregate", reasoning, all_signals)

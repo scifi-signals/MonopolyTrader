@@ -263,6 +263,30 @@ def _fetch_news(ticker: str) -> str:
         return "News unavailable."
 
 
+def build_hold_streak_warning(hold_streak: dict) -> str:
+    """Build the <hold_streak_warning> prompt section from hold streak stats.
+
+    Returns empty string if streak < 5 or hold_streak is None.
+    Used by both single-step and multi-step decision paths.
+    """
+    if not hold_streak or hold_streak.get("consecutive_holds", 0) < 5:
+        return ""
+    hs = hold_streak
+    section = "\n<hold_streak_warning>\n"
+    section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
+    if hs.get("last_trade_hours_ago") is not None:
+        section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
+    section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
+    section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
+    section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
+    if hs["missed_gain_pct"] > 55:
+        section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
+    if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
+        section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
+    section += "</hold_streak_warning>\n"
+    return section
+
+
 def make_decision(
     market_data: dict,
     signals: list[StrategySignal],
@@ -312,21 +336,7 @@ Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 
 """
 
     # Build hold streak warning
-    hold_streak_section = ""
-    if hold_streak and hold_streak.get("consecutive_holds", 0) >= 5:
-        hs = hold_streak
-        hold_streak_section = "\n<hold_streak_warning>\n"
-        hold_streak_section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
-        if hs.get("last_trade_hours_ago") is not None:
-            hold_streak_section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
-        hold_streak_section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
-        hold_streak_section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
-        hold_streak_section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
-        if hs["missed_gain_pct"] > 55:
-            hold_streak_section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
-        if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
-            hold_streak_section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
-        hold_streak_section += "</hold_streak_warning>\n"
+    hold_streak_section = build_hold_streak_warning(hold_streak)
 
     # Build the user prompt
     max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
@@ -596,22 +606,7 @@ Analyze the current market state for {ticker}. Be objective — no action recomm
         return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
 
     # --- Step 2: Strategy ---
-    # Build hold streak warning for multi-step path
-    ms_hold_streak_section = ""
-    if hold_streak and hold_streak.get("consecutive_holds", 0) >= 5:
-        hs = hold_streak
-        ms_hold_streak_section = "\n<hold_streak_warning>\n"
-        ms_hold_streak_section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
-        if hs.get("last_trade_hours_ago") is not None:
-            ms_hold_streak_section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
-        ms_hold_streak_section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
-        ms_hold_streak_section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
-        ms_hold_streak_section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
-        if hs["missed_gain_pct"] > 55:
-            ms_hold_streak_section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
-        if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
-            ms_hold_streak_section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
-        ms_hold_streak_section += "</hold_streak_warning>\n"
+    ms_hold_streak_section = build_hold_streak_warning(hold_streak)
 
     strategy_prompt = f"""<analysis>
 {json.dumps(analysis, indent=2)}

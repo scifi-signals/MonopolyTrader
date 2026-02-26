@@ -216,6 +216,7 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         "signals": decision.get("signals", {}) if decision else {},
         "knowledge_applied": decision.get("knowledge_applied", []) if decision else [],
         "regime": decision.get("_regime", {}) if decision else {},
+        "streak_breaker": decision.get("_streak_breaker") if decision else None,
         "review": None,
     }
 

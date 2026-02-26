@@ -38,6 +38,12 @@ HOLD IS AN ACTIVE DECISION. When you decide to HOLD, you are choosing NOT to act
 
 SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — they have no opinion. They are NOT disagreeing with active signals. If momentum says BUY at 0.75 confidence and three other strategies say HOLD, that means ONE strategy has a strong signal and THREE have nothing to say. That is NOT "only 1 of 5 agrees." Do not use the number of abstaining strategies as a reason to HOLD. Judge the quality and confidence of the ACTIVE signals on their own merits. A single strategy at >0.70 confidence with no opposing signals is a clear trade.
 
+ANTI-PARALYSIS: If a <hold_streak_warning> appears in the data, your excessive caution is proven to be costing money. Respond by:
+- Lowering your confidence threshold: act on any active signal with confidence >0.50
+- A single strategy at >0.60 confidence with no opposing signals is a CLEAR TRADE
+- Your prediction accuracy improves by trading more, not by waiting for perfection
+- Prefer a small BUY over another HOLD when the signal balance is positive
+
 Respond ONLY with valid JSON matching this schema:
 {
   "action": "BUY" | "SELL" | "HOLD",
@@ -266,6 +272,7 @@ def make_decision(
     macro_gate: dict = None,
     regime: dict = None,
     agent_config: dict = None,
+    hold_streak: dict = None,
 ) -> dict:
     """Call Claude to make a trading decision.
 
@@ -304,6 +311,23 @@ Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 
 </macro_regime>
 """
 
+    # Build hold streak warning
+    hold_streak_section = ""
+    if hold_streak and hold_streak.get("consecutive_holds", 0) >= 5:
+        hs = hold_streak
+        hold_streak_section = "\n<hold_streak_warning>\n"
+        hold_streak_section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
+        if hs.get("last_trade_hours_ago") is not None:
+            hold_streak_section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
+        hold_streak_section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
+        hold_streak_section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
+        hold_streak_section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
+        if hs["missed_gain_pct"] > 55:
+            hold_streak_section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
+        if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
+            hold_streak_section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
+        hold_streak_section += "</hold_streak_warning>\n"
+
     # Build the user prompt
     max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
     user_prompt = f"""<market_data>
@@ -326,7 +350,7 @@ Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 
 {news}
 </recent_news>
 {bsm_section}
-Analyze all data and decide: BUY, SELL, or HOLD.
+{hold_streak_section}Analyze all data and decide: BUY, SELL, or HOLD.
 If BUY or SELL, specify how many shares (fractional OK, max trade = 20% of portfolio value = {format_currency(max_trade)}).
 Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
 Respond with JSON only."""
@@ -520,6 +544,7 @@ def make_decision_multi_step(
     macro_gate: dict = None,
     regime: dict = None,
     agent_config: dict = None,
+    hold_streak: dict = None,
 ) -> dict:
     """Three-step reasoning: Analysis → Strategy → Execution.
 
@@ -568,9 +593,26 @@ Analyze the current market state for {ticker}. Be objective — no action recomm
         logger.info(f"Analysis: trend={analysis.get('trend')}, momentum={analysis.get('momentum')}, vol={analysis.get('volatility')}")
     except Exception as e:
         logger.warning(f"Multi-step Analysis failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config)
+        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
 
     # --- Step 2: Strategy ---
+    # Build hold streak warning for multi-step path
+    ms_hold_streak_section = ""
+    if hold_streak and hold_streak.get("consecutive_holds", 0) >= 5:
+        hs = hold_streak
+        ms_hold_streak_section = "\n<hold_streak_warning>\n"
+        ms_hold_streak_section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
+        if hs.get("last_trade_hours_ago") is not None:
+            ms_hold_streak_section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
+        ms_hold_streak_section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
+        ms_hold_streak_section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
+        ms_hold_streak_section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
+        if hs["missed_gain_pct"] > 55:
+            ms_hold_streak_section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
+        if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
+            ms_hold_streak_section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
+        ms_hold_streak_section += "</hold_streak_warning>\n"
+
     strategy_prompt = f"""<analysis>
 {json.dumps(analysis, indent=2)}
 </analysis>
@@ -586,7 +628,7 @@ Analyze the current market state for {ticker}. Be objective — no action recomm
 <portfolio_summary>
 {_format_portfolio(portfolio)}
 </portfolio_summary>
-
+{ms_hold_streak_section}
 Based on the analysis and signals, what action should we take? Justify thoroughly."""
 
     try:
@@ -606,7 +648,7 @@ Based on the analysis and signals, what action should we take? Justify thoroughl
         logger.info(f"Strategy: {strategy_rec.get('recommended_action')} conviction={strategy_rec.get('conviction', 0):.2f}")
     except Exception as e:
         logger.warning(f"Multi-step Strategy failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config)
+        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
 
     # --- Step 3: Execution ---
     max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
@@ -658,7 +700,7 @@ If BUY or SELL, specify exact shares (fractional OK). Be conservative on sizing.
         decision = json.loads(raw3)
     except Exception as e:
         logger.warning(f"Multi-step Execution failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config)
+        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
 
     # Attach multi-step trace metadata
     decision["_multi_step"] = {

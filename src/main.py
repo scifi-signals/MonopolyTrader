@@ -130,17 +130,26 @@ def run_cycle():
         # 9. Get knowledge context
         knowledge = get_relevant_knowledge(market_data)
 
-        # 10. Call agent for decision (with macro/regime context)
+        # 10. Compute hold streak context
+        hold_streak = _get_hold_streak_context()
+        if hold_streak["consecutive_holds"] >= 5:
+            logger.info(
+                f"Hold streak: {hold_streak['consecutive_holds']} consecutive, "
+                f"missed_gain_pct={hold_streak['missed_gain_pct']}%, "
+                f"last_trade={hold_streak['last_trade_hours_ago']}h ago"
+            )
+
+        # 11. Call agent for decision (with macro/regime/hold-streak context)
         if config.get("multi_step_reasoning"):
             logger.info("Using multi-step reasoning mode")
             decision = make_decision_multi_step(
                 market_data, signals, aggregate, portfolio, knowledge,
-                macro_gate=macro_gate, regime=regime,
+                macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
             )
         else:
             decision = make_decision(
                 market_data, signals, aggregate, portfolio, knowledge,
-                macro_gate=macro_gate, regime=regime,
+                macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
             )
         action = decision.get("action", "HOLD")
         shares = decision.get("shares", 0)
@@ -334,6 +343,48 @@ def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
     if len(holds) > 200:
         holds = holds[-200:]
     save_json(path, holds)
+
+
+def _get_hold_streak_context() -> dict:
+    """Compute hold streak stats for agent prompt context."""
+    from datetime import datetime, timezone
+    from .portfolio import load_transactions
+
+    holds = load_json(DATA_DIR / "hold_log.json", default=[])
+    txns = load_transactions()
+
+    # Consecutive agent_decision holds from tail
+    consecutive = 0
+    for h in reversed(holds):
+        if h.get("reason") == "agent_decision":
+            consecutive += 1
+        else:
+            break
+
+    # Recent scored holds (last 20)
+    scored = [h for h in holds if h.get("counterfactual_scored") and h.get("counterfactual_outcome")]
+    recent = scored[-20:]
+    missed = sum(1 for h in recent if h["counterfactual_outcome"].get("verdict") == "missed_gain")
+    correct = sum(1 for h in recent if h["counterfactual_outcome"].get("verdict") == "correct_hold")
+
+    # Hours since last trade
+    last_trade_ago = None
+    if txns:
+        last_ts = txns[-1].get("timestamp", "")
+        if last_ts:
+            try:
+                last_time = datetime.fromisoformat(last_ts)
+                last_trade_ago = round((datetime.now(timezone.utc) - last_time).total_seconds() / 3600, 1)
+            except Exception:
+                pass
+
+    return {
+        "consecutive_holds": consecutive,
+        "recent_missed_gains": missed,
+        "recent_correct_holds": correct,
+        "missed_gain_pct": round(missed / max(missed + correct, 1) * 100, 1),
+        "last_trade_hours_ago": last_trade_ago,
+    }
 
 
 def evaluate_hold_counterfactuals(current_price: float):

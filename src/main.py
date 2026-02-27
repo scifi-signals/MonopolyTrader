@@ -925,6 +925,13 @@ def main():
     parser.add_argument("--graduation-report", action="store_true", help="Show graduation criteria status")
     parser.add_argument("--debug-traces", type=int, nargs="?", const=5, metavar="N", help="Show last N decision traces")
     parser.add_argument("--influence-report", action="store_true", help="Show strategy influence breakdown")
+    # Replay mode flags
+    parser.add_argument("--replay", type=int, metavar="YEAR", help="Run historical replay for a given year (e.g., --replay 2023)")
+    parser.add_argument("--practice", type=str, metavar="SCENARIO", help="Run targeted practice scenario (e.g., --practice crash_2022)")
+    parser.add_argument("--no-obfuscate", action="store_true", help="Disable price obfuscation in replay mode (for debugging)")
+    parser.add_argument("--purge-replay-lessons", type=str, metavar="SESSION", nargs="?", const="ALL", help="Remove replay-sourced lessons (optionally by session ID)")
+    parser.add_argument("--disable-lesson", type=str, metavar="LESSON_ID", help="Disable a specific lesson by ID")
+    parser.add_argument("--enable-lesson", type=str, metavar="LESSON_ID", help="Re-enable a disabled lesson by ID")
     args = parser.parse_args()
 
     init_kb()
@@ -1054,6 +1061,36 @@ def main():
         cash_pct = (portfolio["cash"] / portfolio["total_value"] * 100) if portfolio["total_value"] > 0 else 0
         print(f"  Cash: ${portfolio['cash']:.2f} ({cash_pct:.1f}%)")
         print()
+        return
+    elif args.replay or args.practice:
+        from .replay import ReplayEngine, SCENARIOS
+        obfuscate = not args.no_obfuscate
+        if args.practice:
+            if args.practice not in SCENARIOS:
+                print(f"Unknown scenario: {args.practice}")
+                print(f"Available: {', '.join(SCENARIOS.keys())}")
+                return
+            engine = ReplayEngine(scenario=args.practice, obfuscate=obfuscate)
+        else:
+            engine = ReplayEngine(year=args.replay, obfuscate=obfuscate)
+        asyncio.run(engine.run())
+        return
+    elif args.purge_replay_lessons:
+        from .knowledge_base import purge_replay_lessons
+        session = None if args.purge_replay_lessons == "ALL" else args.purge_replay_lessons
+        removed = purge_replay_lessons(session)
+        tag = f" from session {session}" if session else ""
+        print(f"Purged {removed} replay lessons{tag}.")
+        return
+    elif args.disable_lesson:
+        from .knowledge_base import disable_lesson
+        ok = disable_lesson(args.disable_lesson)
+        print(f"{'Disabled' if ok else 'Not found'}: {args.disable_lesson}")
+        return
+    elif args.enable_lesson:
+        from .knowledge_base import enable_lesson
+        ok = enable_lesson(args.enable_lesson)
+        print(f"{'Enabled' if ok else 'Not found'}: {args.enable_lesson}")
         return
     elif args.backtest:
         from .backtest import WalkForwardBacktest

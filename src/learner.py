@@ -8,7 +8,7 @@ from .knowledge_base import (
     get_lessons, add_lesson, get_patterns, add_pattern,
     get_predictions, update_prediction, get_strategy_scores,
     update_strategy_scores, append_journal, get_knowledge_summary,
-    get_prediction_accuracy, PATTERNS_PATH,
+    get_prediction_accuracy, PATTERNS_PATH, promote_replay_lesson,
 )
 from .portfolio import load_transactions, save_transactions
 
@@ -146,6 +146,57 @@ def _apply_hard_rejections(lesson_category: str, spy_change: float = 0) -> tuple
     return False, ""
 
 
+def _extract_lesson_tags(trade: dict, lesson: dict) -> list[str]:
+    """Extract searchable tags from trade context for tag-based knowledge retrieval.
+
+    Tags encode the market conditions under which the lesson was learned,
+    enabling better matching when similar conditions recur.
+    """
+    tags = []
+
+    # Regime tags
+    regime = trade.get("regime", {}) or lesson.get("regime", {})
+    if regime.get("trend"):
+        tags.append(f"regime_{regime['trend']}")
+    if regime.get("volatility"):
+        tags.append(f"vol_{regime['volatility']}")
+
+    # VIX level
+    vix = regime.get("vix", 0)
+    if vix > 25:
+        tags.append("vix_high")
+    elif vix < 15:
+        tags.append("vix_low")
+
+    # RSI from trade signals
+    signals = trade.get("signals", {})
+    rsi = signals.get("rsi_14") or signals.get("rsi")
+    if rsi is not None:
+        if rsi < 30:
+            tags.append("rsi_oversold")
+        elif rsi > 70:
+            tags.append("rsi_overbought")
+
+    # Category-derived tags
+    category = lesson.get("category", "")
+    if category:
+        tags.append(f"cat_{category}")
+
+    # Strategy tag
+    strategy = trade.get("strategy", "")
+    if strategy and strategy != "unknown":
+        tags.append(f"strat_{strategy}")
+
+    # Signal correctness
+    was_correct = lesson.get("skeptic_review", {}).get("validated")
+    if was_correct is True:
+        tags.append("skeptic_validated")
+    elif was_correct is False:
+        tags.append("skeptic_rejected")
+
+    return tags
+
+
 async def skeptic_challenge(lesson: dict, trade: dict, spy_change: float = 0) -> dict:
     """Run skeptic model on a lesson — separate model, raw data only."""
     config = load_config()
@@ -227,7 +278,13 @@ What went right or wrong? What should the agent learn?"""
         if category not in LESSON_CATEGORIES:
             category = "noise_trade"
 
-        # Build lesson record with v3 fields
+        # Replay source propagation: if this trade came from replay,
+        # tag the lesson with lower weight and faster decay
+        is_replay = bool(trade.get("_replay_source"))
+        base_weight = 0.7 if is_replay else 1.0
+        base_decay = 0.90 if is_replay else 0.95
+
+        # Build lesson record with v3+ fields
         lesson = {
             "linked_trade": trade["id"],
             "what_i_predicted": review.get("what_i_predicted", ""),
@@ -236,12 +293,17 @@ What went right or wrong? What should the agent learn?"""
             "lesson": review.get("lesson", ""),
             "category": category,
             "confidence_adjustment": review.get("confidence_adjustment", {}),
-            "weight": 1.0,
-            "decay_rate": 0.95,
+            "weight": base_weight,
+            "decay_rate": base_decay,
             "times_validated": 0,
             "times_contradicted": 0,
             "model_version": model_ver,
         }
+
+        # Add replay metadata
+        if is_replay:
+            lesson["source"] = "replay"
+            lesson["_replay_source"] = trade["_replay_source"]
 
         # Get SPY movement for skeptic
         spy_change = 0
@@ -287,7 +349,14 @@ What went right or wrong? What should the agent learn?"""
             except Exception:
                 lesson["regime"] = {"trend": "unknown", "volatility": "unknown", "vix": 0}
 
+        # Extract searchable tags (Proposal 11)
+        lesson["tags"] = _extract_lesson_tags(trade, lesson)
+
         saved_lesson = add_lesson(lesson)
+
+        # Promote cited replay lessons if this live trade succeeded (Proposal 6)
+        if not is_replay and review.get("was_correct"):
+            _promote_cited_replay_lessons(trade)
 
         # Mark trade as reviewed
         transactions = load_transactions()
@@ -398,6 +467,34 @@ def _update_pattern_reliability(trade: dict, was_correct: bool):
 
     if updated:
         save_json(PATTERNS_PATH, patterns)
+
+
+# --- Replay Lesson Promotion ---
+
+def _promote_cited_replay_lessons(trade: dict):
+    """When a live trade cites replay lessons and succeeds, promote them.
+
+    This is the bridge between replay practice and live trading: if the agent
+    applied a lesson learned during replay and it worked in live conditions,
+    boost that lesson's weight toward 1.0 (matching live-sourced lessons).
+    """
+    knowledge_applied = trade.get("knowledge_applied", [])
+    if not knowledge_applied:
+        return
+
+    lessons = get_lessons()
+    replay_lesson_ids = {
+        l["id"] for l in lessons
+        if l.get("source") == "replay" and l.get("id") in knowledge_applied
+    }
+
+    for lesson_id in replay_lesson_ids:
+        promoted = promote_replay_lesson(lesson_id)
+        if promoted:
+            logger.info(
+                f"Promoted replay lesson {lesson_id} — "
+                f"cited in successful live trade {trade.get('id', '?')}"
+            )
 
 
 # --- HOLD Counterfactual Learning ---

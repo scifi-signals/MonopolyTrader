@@ -246,34 +246,88 @@ def apply_lesson_decay(decay_rate: float = 0.95) -> int:
 def get_relevant_knowledge(market_context: dict = None) -> dict:
     """Retrieve knowledge relevant to current trading decisions.
 
-    v3: filters by regime match and sorts by decay-weighted relevance.
+    v4: tag-based matching alongside regime filtering. Quality-based scoring
+    with validation boost and age decay (Proposals 1, 2).
     """
+    from datetime import datetime, timezone
+
     lessons = get_lessons()
     patterns = get_patterns()
     scores = get_strategy_scores()
     profile = get_tsla_profile()
 
-    # Filter out archived lessons
-    active_lessons = [l for l in lessons if not l.get("archived")]
+    # Filter out archived and disabled lessons
+    active_lessons = [
+        l for l in lessons
+        if not l.get("archived") and not l.get("disabled")
+    ]
 
-    # Sort by weight (decay-adjusted), most relevant first
-    active_lessons.sort(key=lambda l: l.get("weight", 1.0), reverse=True)
+    now = datetime.now(timezone.utc)
 
-    # If regime info available, boost lessons matching current regime
-    current_regime = None
-    if market_context and "regime" in market_context:
-        current_regime = market_context["regime"]
+    # Extract context tags from market_context for tag-based matching
+    context_tags = set()
+    if market_context:
+        regime = market_context.get("regime", {})
+        if regime.get("trend"):
+            context_tags.add(f"regime_{regime['trend']}")
+        if regime.get("volatility"):
+            context_tags.add(f"vol_{regime['volatility']}")
 
-    if current_regime:
-        def regime_score(lesson):
-            lr = lesson.get("regime", {})
-            score = lesson.get("weight", 1.0)
+        # Parse indicators for tag matching
+        daily = market_context.get("daily_indicators", {})
+        rsi = daily.get("rsi_14")
+        if rsi is not None:
+            if rsi < 30:
+                context_tags.add("rsi_oversold")
+            elif rsi > 70:
+                context_tags.add("rsi_overbought")
+
+        macro = market_context.get("macro", {})
+        vix = macro.get("vix_level") or regime.get("vix", 0)
+        if vix > 25:
+            context_tags.add("vix_high")
+
+    def relevance_score(lesson):
+        """Quality-based scoring: weight * validation_boost / age_decay."""
+        base = lesson.get("weight", 1.0)
+
+        # Validation boost: each validation adds 10%
+        times_validated = lesson.get("times_validated", 0)
+        validation_factor = 1 + times_validated * 0.1
+
+        # Age decay: penalize older lessons slightly
+        age_weeks = 0
+        ts = lesson.get("timestamp")
+        if ts:
+            try:
+                created = datetime.fromisoformat(ts)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                age_weeks = (now - created).days / 7
+            except (ValueError, TypeError):
+                pass
+        age_factor = 1 + age_weeks * 0.05
+
+        score = base * validation_factor / age_factor
+
+        # Regime match boost
+        lr = lesson.get("regime", {})
+        if market_context and "regime" in market_context:
+            current_regime = market_context["regime"]
             if lr.get("trend") == current_regime.get("trend"):
                 score *= 1.5
             if lr.get("volatility") == current_regime.get("volatility"):
                 score *= 1.3
-            return score
-        active_lessons.sort(key=regime_score, reverse=True)
+
+        # Tag match boost
+        lesson_tags = set(lesson.get("tags", []))
+        if context_tags and lesson_tags:
+            overlap = len(context_tags & lesson_tags)
+            score *= (1 + overlap * 0.2)
+
+        return score
+
+    active_lessons.sort(key=relevance_score, reverse=True)
 
     recent_lessons = active_lessons[:10]
     active_patterns = [p for p in patterns if p.get("reliability", 0) > 0.3]
@@ -285,6 +339,80 @@ def get_relevant_knowledge(market_context: dict = None) -> dict:
         "tsla_profile": profile,
         "prediction_accuracy": get_prediction_accuracy(),
     }
+
+
+# --- Replay Lesson Management ---
+
+def purge_replay_lessons(session_id: str = None) -> int:
+    """Remove all replay-sourced lessons, optionally filtered by session.
+
+    Returns the number of lessons removed.
+    """
+    lessons = get_lessons()
+    original_count = len(lessons)
+
+    if session_id:
+        filtered = [l for l in lessons if l.get("_replay_source") != session_id]
+    else:
+        filtered = [l for l in lessons if l.get("source") != "replay"]
+
+    removed = original_count - len(filtered)
+    if removed > 0:
+        save_json(LESSONS_PATH, filtered)
+        tag = f" (session {session_id})" if session_id else ""
+        logger.info(f"Purged {removed} replay lessons{tag}")
+
+    return removed
+
+
+def promote_replay_lesson(lesson_id: str, boost: float = 0.05) -> bool:
+    """Boost a replay lesson's weight toward 1.0 and upgrade its decay rate.
+
+    Called when a live trade cites a replay lesson and the trade succeeds.
+    Returns True if lesson was found and promoted.
+    """
+    lessons = get_lessons()
+    for lesson in lessons:
+        if lesson.get("id") == lesson_id:
+            old_weight = lesson.get("weight", 0.7)
+            lesson["weight"] = min(1.0, round(old_weight + boost, 4))
+            lesson["decay_rate"] = max(lesson.get("decay_rate", 0.90), 0.95)
+            lesson["times_validated"] = lesson.get("times_validated", 0) + 1
+            lesson["last_validated"] = iso_now()
+            save_json(LESSONS_PATH, lessons)
+            logger.info(
+                f"Promoted replay lesson {lesson_id}: "
+                f"weight {old_weight:.3f} -> {lesson['weight']:.3f}, "
+                f"decay_rate -> {lesson['decay_rate']}"
+            )
+            return True
+    return False
+
+
+def disable_lesson(lesson_id: str) -> bool:
+    """Disable a lesson so it's excluded from retrieval."""
+    lessons = get_lessons()
+    for lesson in lessons:
+        if lesson.get("id") == lesson_id:
+            lesson["disabled"] = True
+            save_json(LESSONS_PATH, lessons)
+            logger.info(f"Disabled lesson {lesson_id}")
+            return True
+    logger.warning(f"Lesson {lesson_id} not found")
+    return False
+
+
+def enable_lesson(lesson_id: str) -> bool:
+    """Re-enable a disabled lesson."""
+    lessons = get_lessons()
+    for lesson in lessons:
+        if lesson.get("id") == lesson_id:
+            lesson.pop("disabled", None)
+            save_json(LESSONS_PATH, lessons)
+            logger.info(f"Enabled lesson {lesson_id}")
+            return True
+    logger.warning(f"Lesson {lesson_id} not found")
+    return False
 
 
 def get_prediction_accuracy() -> dict:

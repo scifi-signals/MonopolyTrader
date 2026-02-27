@@ -52,7 +52,7 @@ Respond ONLY with valid JSON matching this schema:
   "strategy": "<primary strategy driving this decision>",
   "hypothesis": "<I predict TSLA will [direction] by [amount] over [timeframe] because [reasoning]>",
   "reasoning": "<detailed analysis referencing indicators, signals, and knowledge>",
-  "knowledge_applied": ["<lesson_id or pattern_id>"],
+  "knowledge_applied": ["<lesson_id — MUST list at least one if lessons were provided>"],
   "risk_note": "<any risk concerns>",
   "predictions": {
     "30min": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>},

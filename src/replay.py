@@ -441,6 +441,11 @@ class ReplayEngine:
                 "volume": b.get("volume", 0),
             })
 
+        # Pre-calculate max trade value so the agent knows its budget
+        risk = self.config["risk_params"]
+        max_trade_value = round(self.portfolio.portfolio["total_value"] * risk["max_single_trade_pct"], 2)
+        max_shares = round(max_trade_value / bar["close"], 4) if bar["close"] > 0 else 0
+
         market_data = {
             "ticker": "TSLA",
             "current": {
@@ -448,6 +453,10 @@ class ReplayEngine:
                 "change": round(bar["close"] - bar["open"], 2),
                 "change_pct": round((bar["close"] - bar["open"]) / bar["open"] * 100, 2) if bar["open"] else 0,
                 "volume": bar.get("volume", 0),
+            },
+            "position_limits": {
+                "max_trade_value": max_trade_value,
+                "max_shares_at_current_price": max_shares,
             },
             "daily_indicators": {
                 "rsi_14": bar.get("rsi_14"),
@@ -549,7 +558,7 @@ class ReplayEngine:
             "risk_note": "Retry exhausted",
         }
 
-    async def _review_matured_trades(self, bar: dict, bar_index: int):
+    async def _review_matured_trades(self, bar: dict, bar_index: int, bars: list[dict]):
         """Review trades that are 5+ bars old."""
         current_price = bar["close"]
         still_pending = []
@@ -557,6 +566,9 @@ class ReplayEngine:
         for txn, trade_bar in self.pending_reviews:
             if bar_index - trade_bar >= REVIEW_DELAY_BARS:
                 try:
+                    # Attach historical SPY change so the skeptic has real data
+                    spy_change = bar.get("spy_daily_change", 0)
+                    txn["_replay_spy_change"] = spy_change
                     lesson = await review_trade(txn, current_price)
                     if lesson:
                         self.lessons_created.append(lesson)
@@ -662,7 +674,7 @@ class ReplayEngine:
                         self.pending_reviews.append((txn, i))
 
             # 8. Review matured trades
-            await self._review_matured_trades(bar, i)
+            await self._review_matured_trades(bar, i, bars)
 
             # 9. Checkpoint
             if i > 0 and i % CHECKPOINT_INTERVAL == 0:
@@ -684,6 +696,7 @@ class ReplayEngine:
             last_bar = bars[-1]
             for txn, _ in self.pending_reviews:
                 try:
+                    txn["_replay_spy_change"] = last_bar.get("spy_daily_change", 0)
                     lesson = await review_trade(txn, last_bar["close"])
                     if lesson:
                         self.lessons_created.append(lesson)

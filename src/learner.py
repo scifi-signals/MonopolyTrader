@@ -197,9 +197,21 @@ def _extract_lesson_tags(trade: dict, lesson: dict) -> list[str]:
     return tags
 
 
-async def skeptic_challenge(lesson: dict, trade: dict, spy_change: float = 0) -> dict:
+async def skeptic_challenge(lesson: dict, trade: dict, spy_change: float = 0, *, is_replay: bool = False) -> dict:
     """Run skeptic model on a lesson — separate model, raw data only."""
     config = load_config()
+
+    replay_context = ""
+    if is_replay:
+        replay_context = """
+NOTE: This trade was executed in HISTORICAL REPLAY mode (practicing on past data).
+You have the real SPY data for this period. The agent did NOT have hindsight — it
+saw obfuscated prices and had no knowledge of future bars. Evaluate the lesson on
+its trading logic merits. Be slightly more lenient on sample size since the agent
+is actively building experience through practice. A replay lesson that captures
+a real pattern is valuable even with limited occurrences — mark validated=true if
+the core trading logic is sound, even if sample size is small.
+"""
 
     user_prompt = f"""Challenge this lesson from a trading agent:
 
@@ -212,7 +224,7 @@ What happened: {lesson.get('what_actually_happened', '')}
 Raw data:
 - SPY movement during same period: {spy_change*100:.2f}%
 - Trade P&L: ${trade.get('realized_pnl', 'still open')}
-
+{replay_context}
 Challenge this lesson. Is there a simpler explanation?"""
 
     try:
@@ -305,14 +317,17 @@ What went right or wrong? What should the agent learn?"""
             lesson["source"] = "replay"
             lesson["_replay_source"] = trade["_replay_source"]
 
-        # Get SPY movement for skeptic
+        # Get SPY movement for skeptic — use historical data for replay trades
         spy_change = 0
-        try:
-            from .market_data import get_macro_data
-            macro = get_macro_data()
-            spy_change = macro.get("spy_change_pct", 0)
-        except Exception:
-            pass
+        if is_replay and "_replay_spy_change" in trade:
+            spy_change = trade["_replay_spy_change"]
+        else:
+            try:
+                from .market_data import get_macro_data
+                macro = get_macro_data()
+                spy_change = macro.get("spy_change_pct", 0)
+            except Exception:
+                pass
 
         # Hard rejection check
         rejected, reason = _apply_hard_rejections(category, spy_change)
@@ -321,11 +336,14 @@ What went right or wrong? What should the agent learn?"""
             lesson["weight"] = 0.3
             logger.info(f"Hard rejection: {reason}")
         else:
-            # Run skeptic challenge
-            skeptic = await skeptic_challenge(lesson, trade, spy_change)
+            # Run skeptic challenge (replay-aware)
+            skeptic = await skeptic_challenge(lesson, trade, spy_change, is_replay=is_replay)
             lesson["skeptic_review"] = skeptic
             if not skeptic.get("validated", True):
-                lesson["weight"] = 0.5  # Downweight unvalidated lessons
+                # Replay lessons get a lighter penalty since the skeptic has
+                # limited context (no intraday correlation data, no live news)
+                penalty_weight = 0.55 if is_replay else 0.5
+                lesson["weight"] = min(lesson["weight"], penalty_weight)
                 logger.info(f"Skeptic downweighted lesson: {skeptic.get('simpler_explanation', '')[:80]}")
 
         # Add regime tag — use regime stored at trade time if available,

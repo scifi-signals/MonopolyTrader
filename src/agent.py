@@ -95,6 +95,12 @@ def _format_market_data(market_data: dict) -> str:
 
     parts = [f"Current: ${current.get('price', 'N/A')} ({current.get('change_pct', 0):+.2f}%)"]
     parts.append(f"Volume: {current.get('volume', 0):,}")
+
+    # Position limits (if provided, e.g. from replay engine)
+    limits = market_data.get("position_limits")
+    if limits:
+        parts.append(f">>> MAX TRADE: ${limits['max_trade_value']:.2f} = {limits['max_shares_at_current_price']:.4f} shares at current price. DO NOT exceed this. <<<")
+
     parts.append("")
 
     parts.append("Daily Indicators:")

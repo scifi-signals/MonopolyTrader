@@ -158,6 +158,17 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
     else:
         exec_price = round(price * (1 - slippage), 2)
 
+    # Clamp BUY shares so slippage-adjusted cost fits within position limits
+    if action == "BUY":
+        max_trade = portfolio["total_value"] * risk["max_single_trade_pct"]
+        total_cost_check = shares * exec_price
+        if total_cost_check > max_trade and total_cost_check - max_trade < max_trade * 0.02:
+            # Within 2% of limit (slippage/rounding margin) — clamp down
+            clamped = round(max_trade / exec_price, 4)
+            if clamped > 0 and clamped < shares:
+                logger.info(f"Clamped shares {shares:.4f} → {clamped:.4f} to fit max trade ${max_trade:.2f} after slippage")
+                shares = clamped
+
     # Validate
     ok, reason = validate_trade(action, shares, exec_price, portfolio)
     if not ok:

@@ -13,7 +13,10 @@ from .utils import (
     format_currency, format_pct, setup_logging, DATA_DIR,
     load_json, save_json,
 )
-from .market_data import get_current_price, get_market_summary, check_macro_gate, classify_regime
+from .market_data import (
+    get_current_price, get_market_summary, check_macro_gate, classify_regime,
+    check_volume_spike, check_vix_change,
+)
 from .portfolio import (
     load_portfolio, execute_trade, save_portfolio, save_snapshot,
     check_stop_losses, check_daily_loss_limit, check_cooldown,
@@ -21,7 +24,7 @@ from .portfolio import (
     apply_gap_risk_reduction,
 )
 from .strategies import evaluate_all_strategies, aggregate_signals, calculate_signal_balance
-from .agent import make_decision, make_decision_multi_step
+from .agent import make_decision, make_decision_multi_step, run_analyst, run_trader
 from .knowledge_base import (
     initialize as init_kb, get_strategy_scores, get_relevant_knowledge,
     get_knowledge_summary,
@@ -32,6 +35,8 @@ from .learner import (
     review_hold_outcomes,
 )
 from .researcher import run_full_research
+from .news_feed import fetch_news_feed
+from .thesis import load_thesis, save_thesis, create_initial_thesis, thesis_changed_meaningfully
 
 logger = setup_logging("main")
 
@@ -49,7 +54,346 @@ signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
 
-# --- Decision Cycle (every poll interval during market hours) ---
+# --- v2 Event-Driven Trigger System ---
+
+# Track last trigger evaluation for hourly minimum check
+_last_analyst_call = None
+_last_hourly_check = None
+
+
+def evaluate_triggers(
+    news_feed,
+    thesis,
+    current_price: float,
+    market_data: dict,
+    config: dict,
+) -> list[dict]:
+    """Evaluate all trigger conditions. Returns list of triggered events.
+
+    If no triggers fire, the cycle skips the Claude call entirely.
+    """
+    global _last_hourly_check
+    from datetime import datetime, timezone
+
+    triggers = []
+    trigger_config = config.get("event_triggers", {})
+    now = datetime.now(timezone.utc)
+
+    # 1. High-impact news
+    news_threshold = trigger_config.get("news_relevance_threshold", 0.7)
+    high_impact = [i for i in news_feed.items if i.relevance > news_threshold]
+    if high_impact:
+        triggers.append({
+            "type": "news_high_impact",
+            "detail": f"{len(high_impact)} items above {news_threshold}",
+            "items": [i.title[:80] for i in high_impact[:3]],
+        })
+
+    # 2. Price level break (thesis support/resistance)
+    if thesis.narrative:  # Only if thesis is established
+        level_break = thesis.price_breaks_level(current_price)
+        if level_break:
+            triggers.append({
+                "type": "price_level_break",
+                "detail": f"{level_break['type']} at ${level_break['level']} (price=${current_price})",
+            })
+
+    # 3. Volume spike
+    try:
+        vol_threshold = trigger_config.get("volume_spike_threshold", 2.0)
+        vol_data = check_volume_spike(config["ticker"])
+        if vol_data["ratio"] >= vol_threshold:
+            triggers.append({
+                "type": "volume_spike",
+                "detail": f"Volume {vol_data['ratio']:.1f}x 20-day avg",
+            })
+    except Exception as e:
+        logger.debug(f"Volume spike check failed: {e}")
+
+    # 4. VIX spike
+    try:
+        vix_threshold = trigger_config.get("vix_change_threshold", 3.0)
+        vix_data = check_vix_change()
+        if abs(vix_data["change"]) >= vix_threshold:
+            triggers.append({
+                "type": "vix_spike",
+                "detail": f"VIX moved {vix_data['change']:+.1f} to {vix_data['current']:.1f}",
+            })
+    except Exception as e:
+        logger.debug(f"VIX change check failed: {e}")
+
+    # 5. Thesis stale
+    stale_hours = trigger_config.get("thesis_stale_hours", 4)
+    if thesis.is_stale(stale_hours):
+        triggers.append({
+            "type": "thesis_stale",
+            "detail": f"Thesis not updated in >{stale_hours}h",
+        })
+
+    # 6. Hourly minimum check (at least once per hour)
+    if _last_hourly_check is None or (now - _last_hourly_check).total_seconds() >= 3600:
+        if not triggers:  # Only add if no other trigger already fired
+            triggers.append({
+                "type": "hourly_check",
+                "detail": "Minimum hourly thesis/market check",
+            })
+        _last_hourly_check = now
+
+    return triggers
+
+
+def run_cycle_v2():
+    """v2 decision cycle — event-driven, thesis-first architecture.
+
+    Every 15 min:
+      1. Fetch market data + news feed           [always]
+      2. Update portfolio price, score predictions [always]
+      3. Check stop losses                        [always]
+      4. Evaluate triggers                        [NEW]
+      5. If no trigger → log, refresh dashboard, RETURN (no Claude call)
+      6. If trigger → run Analyst and/or Trader
+      7. Refresh dashboard
+    """
+    global _last_analyst_call
+    from datetime import datetime, timezone
+
+    config = load_config()
+    ticker = config["ticker"]
+
+    if not is_market_open(config):
+        return
+
+    if check_daily_loss_limit():
+        logger.warning("Daily loss limit reached — skipping cycle")
+        return
+
+    try:
+        # 1. Fetch market data + news
+        logger.info("--- v2 Decision Cycle ---")
+        market_data = get_market_summary(ticker)
+        current_price = market_data["current"]["price"]
+        regime = market_data.get("regime", {})
+        macro = market_data.get("macro", {})
+        atr = market_data.get("daily_indicators", {}).get("atr", 0) or 0
+        vix = regime.get("vix", 0)
+
+        logger.info(
+            f"{ticker}: ${current_price} "
+            f"({market_data['current'].get('change_pct', 0):+.2f}%) "
+            f"| Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')} "
+            f"| VIX: {vix:.1f}"
+        )
+
+        # Fetch news feed
+        news_feed = fetch_news_feed(ticker)
+
+        # 2. Update portfolio
+        portfolio = load_portfolio()
+        portfolio = update_market_price(portfolio, ticker, current_price)
+        save_portfolio(portfolio)
+
+        # 3. Check stop losses (always — safety first)
+        stop_signal = check_stop_losses(current_price, atr=atr, vix=vix)
+        if stop_signal:
+            logger.warning(f"STOP LOSS: selling {stop_signal['shares']:.4f} shares")
+            result = execute_trade(
+                "SELL", stop_signal["shares"], current_price,
+                {"strategy": "stop_loss", "confidence": 1.0,
+                 "hypothesis": stop_signal["reason"],
+                 "reasoning": "Automatic stop loss execution",
+                 "_vix": vix}
+            )
+            if result["status"] == "executed":
+                logger.info(f"Stop loss executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
+            return
+
+        # 4. Evaluate triggers
+        thesis = load_thesis()
+        if not thesis.narrative:
+            thesis = create_initial_thesis()
+
+        triggers = evaluate_triggers(news_feed, thesis, current_price, market_data, config)
+
+        if not triggers:
+            logger.info("No triggers fired — skipping Claude call")
+            # Still score predictions and refresh dashboard
+            scored = review_predictions(current_price)
+            if scored:
+                logger.info(f"Scored {len(scored)} predictions")
+            try:
+                evaluate_hold_counterfactuals(current_price)
+            except Exception:
+                pass
+            try:
+                from .reporter import generate_dashboard_data
+                generate_dashboard_data()
+            except Exception:
+                pass
+            return
+
+        trigger_names = [t["type"] for t in triggers]
+        trigger_details = "; ".join(f"{t['type']}: {t['detail']}" for t in triggers)
+        logger.info(f"TRIGGERS FIRED: {trigger_details}")
+
+        # 5. Check macro gate
+        macro_gate = check_macro_gate(config)
+        if macro_gate["gate_active"]:
+            logger.warning(f"Macro gate: {macro_gate['reason']}")
+
+        # 6. Check earnings blackout
+        earnings_blocked = _check_earnings_blackout(ticker, config)
+
+        # 7. Check cooldown
+        cooldown_ok = check_cooldown(ticker)
+
+        # 8. Run Analyst phase (update thesis)
+        now = datetime.now(timezone.utc)
+        needs_analyst = any(t["type"] in (
+            "news_high_impact", "price_level_break", "thesis_stale",
+            "vix_spike", "hourly_check",
+        ) for t in triggers)
+
+        old_thesis = thesis
+        if needs_analyst:
+            trigger_reason = trigger_details
+            thesis = run_analyst(
+                thesis, news_feed, market_data,
+                regime=regime, trigger_reason=trigger_reason,
+            )
+            _last_analyst_call = now
+
+        # 9. Decide whether to run Trader
+        needs_trader = (
+            thesis_changed_meaningfully(old_thesis, thesis)
+            or any(t["type"] in ("price_level_break", "volume_spike") for t in triggers)
+            or (thesis.conviction >= 0.5 and "hourly_check" in trigger_names)
+        )
+
+        if not needs_trader:
+            logger.info("Analyst updated thesis but no trade trigger — skipping Trader")
+            _post_cycle_tasks(current_price, market_data, regime)
+            return
+
+        if not cooldown_ok:
+            logger.info("Trader would run but cooldown active — skipping")
+            _post_cycle_tasks(current_price, market_data, regime)
+            return
+
+        # 10. Run strategy signals (with thesis context)
+        scores = get_strategy_scores()
+        signals = evaluate_all_strategies(
+            market_data, portfolio, scores, regime=regime,
+            thesis_direction=thesis.direction,
+            thesis_conviction=thesis.conviction,
+        )
+        aggregate = aggregate_signals(signals)
+        logger.info(f"Aggregate signal: {aggregate.action} (conf={aggregate.confidence:.2f})")
+
+        # 11. Calculate position size
+        max_shares = calculate_position_size(
+            portfolio["total_value"], current_price, atr, vix, config
+        )
+        max_shares = apply_gap_risk_reduction(max_shares, config)
+
+        # 12. Get knowledge context
+        knowledge = get_relevant_knowledge(market_data)
+
+        # 13. Compute hold streak
+        hold_streak = _get_hold_streak_context()
+
+        # 14. Run Trader phase
+        decision = run_trader(
+            thesis, market_data, signals, aggregate, portfolio,
+            knowledge=knowledge, macro_gate=macro_gate, regime=regime,
+            hold_streak=hold_streak,
+        )
+        action = decision.get("action", "HOLD")
+        shares = decision.get("shares", 0)
+
+        # 15. Apply macro gate confidence override
+        if macro_gate["gate_active"] and action == "BUY":
+            conf_threshold = macro_gate.get("confidence_threshold_override", 0.80)
+            if decision.get("confidence", 0) < conf_threshold:
+                logger.warning(
+                    f"Macro gate override: BUY confidence {decision.get('confidence', 0):.2f} "
+                    f"< required {conf_threshold:.2f}. Forcing HOLD."
+                )
+                action = "HOLD"
+                _log_hold_decision(decision, market_data, signals, "macro_gate_override")
+
+        # 16. Apply earnings blackout
+        if earnings_blocked and action == "BUY":
+            logger.info("Earnings blackout: blocking BUY, forcing HOLD")
+            action = "HOLD"
+            _log_hold_decision(decision, market_data, signals, "earnings_blackout")
+
+        # 17. Cap shares by ATR-sized max
+        if action == "BUY" and shares > max_shares:
+            logger.info(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f} shares")
+            shares = max_shares
+
+        # 18. Execute or log HOLD
+        if action in ("BUY", "SELL") and shares > 0:
+            decision["_vix"] = vix
+            decision["_regime"] = regime
+            decision["_triggers"] = trigger_names
+            result = execute_trade(action, shares, current_price, decision)
+            if result["status"] == "executed":
+                txn = result["transaction"]
+                logger.info(
+                    f"EXECUTED: {action} {shares:.4f} @ ${txn['price']:.2f} "
+                    f"| Cash: {format_currency(result['portfolio']['cash'])} "
+                    f"| Value: {format_currency(result['portfolio']['total_value'])}"
+                )
+            elif result["status"] == "rejected":
+                logger.warning(f"Trade rejected: {result['reason']}")
+        else:
+            logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:100]}")
+            _log_hold_decision(decision, market_data, signals, "agent_decision")
+
+        # 19. Post-cycle tasks
+        try:
+            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
+        except Exception as e:
+            logger.warning(f"Failed to save latest cycle: {e}")
+
+        _post_cycle_tasks(current_price, market_data, regime)
+
+        # Handle research requests
+        research_req = decision.get("research_request")
+        if research_req:
+            logger.info(f"Agent requested research: {research_req}")
+            _save_research_request(research_req)
+
+    except Exception as e:
+        logger.error(f"v2 decision cycle error: {e}", exc_info=True)
+
+
+def _post_cycle_tasks(current_price: float, market_data: dict, regime: dict):
+    """Run tasks that happen after every cycle (triggered or not)."""
+    # Score predictions
+    scored = review_predictions(current_price)
+    if scored:
+        logger.info(f"Scored {len(scored)} predictions")
+
+    # Score hold counterfactuals
+    try:
+        evaluate_hold_counterfactuals(current_price)
+    except Exception as e:
+        logger.warning(f"Hold counterfactual scoring failed: {e}")
+
+    # Review recent trades
+    asyncio.run(_review_recent_trades(current_price))
+
+    # Refresh dashboard
+    try:
+        from .reporter import generate_dashboard_data
+        generate_dashboard_data()
+    except Exception as e:
+        logger.warning(f"Dashboard update failed: {e}")
+
+
+# --- v1 Decision Cycle (kept for backward compat / ensemble) ---
 
 def run_cycle():
     """The core v3 trading cycle — regime-aware, macro-gated, ATR-sized."""
@@ -775,8 +1119,8 @@ def run_scheduler():
         f"research 16:30→{research_utc}, decay Sun 18:00→{decay_utc}"
     )
 
-    # Schedule decision cycles
-    schedule.every(interval).minutes.do(run_cycle)
+    # Schedule decision cycles (v2 event-driven)
+    schedule.every(interval).minutes.do(run_cycle_v2)
 
     # Schedule daily research at 4:30 PM ET (30 min after close)
     schedule.every().day.at(research_utc).do(lambda: asyncio.run(run_daily_research()))
@@ -796,8 +1140,8 @@ def run_scheduler():
 
     # Run initial cycle immediately if market is open
     if is_market_open(config):
-        logger.info("Market is open — running initial cycle")
-        run_cycle()
+        logger.info("Market is open — running initial v2 cycle")
+        run_cycle_v2()
     else:
         et = now_et()
         logger.info(f"Market closed (ET: {et.strftime('%H:%M %A')}). Waiting for market hours...")
@@ -812,15 +1156,16 @@ def run_scheduler():
 # --- Single Cycle Mode ---
 
 def run_once():
-    """Run a single v3 decision cycle (for testing)."""
+    """Run a single v2 thesis-driven decision cycle (for testing)."""
     config = load_config()
     ticker = config["ticker"]
 
     init_kb()
 
-    logger.info("--- Single Cycle Mode (v3) ---")
+    logger.info("--- Single Cycle Mode (v2 thesis-driven) ---")
 
     try:
+        # Fetch market data + news
         market_data = get_market_summary(ticker)
         current_price = market_data["current"]["price"]
         regime = market_data.get("regime", {})
@@ -829,6 +1174,17 @@ def run_once():
 
         print(f"\n{ticker}: ${current_price}")
         print(f"Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')} | VIX: {vix:.1f} | ATR: {atr:.2f}")
+
+        # News feed
+        news = fetch_news_feed(ticker)
+        print(f"News: {len(news.items)} items, {len(news.high_impact)} high-impact")
+
+        # Thesis
+        thesis = load_thesis()
+        if thesis is None:
+            print("No thesis found — creating initial thesis")
+            thesis = create_initial_thesis()
+        print(f"Thesis: {thesis.direction} (conviction {thesis.conviction:.2f})")
 
         # Macro gate
         macro_gate = check_macro_gate(config)
@@ -850,8 +1206,24 @@ def run_once():
                           "_vix": vix})
             return
 
+        # Evaluate triggers (force all in --once mode)
+        triggers = evaluate_triggers(thesis, news, market_data, config)
+        print(f"Triggers: {[t['type'] for t in triggers] if triggers else 'none (forcing analyst anyway)'}")
+
+        # Always run analyst in --once mode
+        trigger_reason = triggers[0]["reason"] if triggers else "manual --once mode"
+        old_thesis = thesis
+        thesis = run_analyst(thesis, news, market_data, regime, trigger_reason)
+        if thesis != old_thesis:
+            save_thesis(thesis, trigger_reason)
+            print(f"Thesis updated → {thesis.direction} (conviction {thesis.conviction:.2f})")
+
+        # Run trader
         scores = get_strategy_scores()
-        signals = evaluate_all_strategies(market_data, portfolio, scores, regime=regime)
+        signals = evaluate_all_strategies(
+            market_data, portfolio, scores, regime=regime,
+            thesis_direction=thesis.direction, thesis_conviction=thesis.conviction,
+        )
         aggregate = aggregate_signals(signals)
 
         # Position sizing with gap risk reduction
@@ -862,9 +1234,19 @@ def run_once():
         print(f"ATR position cap: {max_shares:.4f} shares")
 
         knowledge = get_relevant_knowledge(market_data)
-        decision = make_decision(
-            market_data, signals, aggregate, portfolio, knowledge,
-            macro_gate=macro_gate, regime=regime,
+
+        # Count hold streak
+        txns = load_json(DATA_DIR / "transactions.json") or []
+        hold_streak = 0
+        for t in reversed(txns):
+            if t.get("action") == "HOLD":
+                hold_streak += 1
+            else:
+                break
+
+        decision = run_trader(
+            thesis, market_data, signals, aggregate, portfolio, knowledge,
+            macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
         )
 
         action = decision.get("action", "HOLD")

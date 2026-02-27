@@ -33,23 +33,30 @@ def _default_strategy_scores() -> dict:
                 "win_rate": 0.0, "avg_return_pct": 0.0,
                 "total_pnl": 0.0, "trend": "neutral", "notes": "",
             },
-            "sentiment": {
-                "weight": 0.20, "initial_weight": 0.20,
-                "total_trades": 0, "winning_trades": 0,
-                "win_rate": 0.0, "avg_return_pct": 0.0,
-                "total_pnl": 0.0, "trend": "neutral", "notes": "",
-            },
             "technical_signals": {
                 "weight": 0.20, "initial_weight": 0.20,
                 "total_trades": 0, "winning_trades": 0,
                 "win_rate": 0.0, "avg_return_pct": 0.0,
                 "total_pnl": 0.0, "trend": "neutral", "notes": "",
             },
-            "dca": {
-                "weight": 0.20, "initial_weight": 0.20,
+            "thesis_alignment": {
+                "weight": 0.25, "initial_weight": 0.25,
                 "total_trades": 0, "winning_trades": 0,
                 "win_rate": 0.0, "avg_return_pct": 0.0,
-                "total_pnl": 0.0, "trend": "neutral", "notes": "",
+                "total_pnl": 0.0, "trend": "neutral", "notes": "v2: thesis-driven signal",
+            },
+            # Legacy strategies — kept for backward compat with existing scores
+            "sentiment": {
+                "weight": 0.10, "initial_weight": 0.20,
+                "total_trades": 0, "winning_trades": 0,
+                "win_rate": 0.0, "avg_return_pct": 0.0,
+                "total_pnl": 0.0, "trend": "neutral", "notes": "deprecated in v2",
+            },
+            "dca": {
+                "weight": 0.05, "initial_weight": 0.20,
+                "total_trades": 0, "winning_trades": 0,
+                "win_rate": 0.0, "avg_return_pct": 0.0,
+                "total_pnl": 0.0, "trend": "neutral", "notes": "deprecated in v2",
             },
         },
         "rebalance_history": [],
@@ -89,7 +96,7 @@ def initialize():
         JOURNAL_PATH.write_text("# MonopolyTrader Journal\n\n")
 
     # Research files
-    for name in ["earnings_history", "catalyst_events", "correlation_notes", "sector_context"]:
+    for name in ["earnings_history", "catalyst_events", "correlation_notes", "sector_context", "seasonal_patterns"]:
         path = RESEARCH_DIR / f"{name}.json"
         if not path.exists():
             save_json(path, {"topic": name, "last_updated": None, "findings": []})
@@ -491,6 +498,53 @@ def _compute_strategy_accuracy(predictions: list) -> dict:
                 "accuracy_pct": round(sum(results) / len(results) * 100, 1),
             }
     return result
+
+
+def get_relevant_research() -> str:
+    """Retrieve latest findings from all research topics for the Analyst prompt.
+
+    Reads from knowledge/research/ and returns a formatted text summary
+    of the most recent findings from each topic.
+    """
+    topics = [
+        "earnings_history",
+        "catalyst_events",
+        "correlation_notes",
+        "sector_context",
+        "seasonal_patterns",
+    ]
+
+    parts = []
+    for topic in topics:
+        data = get_research(topic)
+        findings = data.get("findings", [])
+        if not findings:
+            continue
+
+        # Get the most recent finding
+        latest = findings[-1]
+        last_updated = data.get("last_updated", "unknown")
+        parts.append(f"[{topic}] (updated: {last_updated})")
+
+        # Format the finding — handle both dict and string findings
+        if isinstance(latest, dict):
+            # Remove timestamp from display (already shown in header)
+            display = {k: v for k, v in latest.items() if k != "timestamp"}
+            # Truncate long values
+            for k, v in display.items():
+                if isinstance(v, str) and len(v) > 200:
+                    display[k] = v[:200] + "..."
+                elif isinstance(v, list) and len(v) > 5:
+                    display[k] = v[:5] + ["..."]
+            import json
+            parts.append(f"  {json.dumps(display, default=str)[:500]}")
+        else:
+            parts.append(f"  {str(latest)[:500]}")
+
+    if not parts:
+        return "No research findings available yet."
+
+    return "\n".join(parts)
 
 
 def get_knowledge_summary() -> str:

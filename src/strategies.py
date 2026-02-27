@@ -165,67 +165,114 @@ def technical_signals_signal(indicators: dict, weight: float) -> StrategySignal:
     return _hold(name, reasoning, weight, sigs)
 
 
-def dca_signal(portfolio: dict, indicators: dict, weight: float) -> StrategySignal:
-    """Small periodic buys, with tactical adjustment based on conditions."""
-    name = "dca"
+def thesis_alignment_signal(
+    indicators: dict,
+    thesis_direction: str,
+    thesis_conviction: float,
+    weight: float,
+) -> StrategySignal:
+    """Generate signal based on thesis direction + technical confirmation.
+
+    The thesis (from the Analyst) determines direction.
+    Technicals provide timing confirmation. This replaces both DCA and sentiment.
+    """
+    name = "thesis_alignment"
     price = indicators.get("current_price")
     rsi = indicators.get("rsi_14")
+    sma20 = indicators.get("sma_20")
+    macd_cross = indicators.get("macd_crossover", "none")
 
-    if price is None:
-        return _hold(name, "No price data", weight)
+    if price is None or not thesis_direction:
+        return _hold(name, "Insufficient data or no thesis", weight)
 
-    sigs = {"price": price, "rsi_14": rsi}
+    sigs = {
+        "price": price, "rsi_14": rsi, "sma_20": sma20,
+        "thesis_direction": thesis_direction, "thesis_conviction": thesis_conviction,
+    }
 
-    # DCA always leans toward small buys if we have cash
-    cash = portfolio.get("cash", 0)
-    total_value = portfolio.get("total_value", 1)
+    # Neutral thesis = no directional signal
+    if thesis_direction == "neutral":
+        return _hold(name, f"Thesis neutral (conviction={thesis_conviction:.2f}), waiting for clarity", weight, sigs)
 
-    if cash / total_value < 0.15:
-        return _hold(name, f"Low cash reserve ({cash/total_value*100:.0f}%), skipping DCA", weight, sigs)
+    # Low conviction = weak signal regardless of technicals
+    if thesis_conviction < 0.3:
+        return _hold(name, f"Thesis {thesis_direction} but conviction too low ({thesis_conviction:.2f})", weight, sigs)
 
-    # Base DCA is a low-confidence buy
-    conf = 0.25
+    # BULLISH thesis: look for technical buy confirmation
+    if thesis_direction == "bullish":
+        tech_confirms = 0
+        reasons = [f"Thesis bullish (conviction={thesis_conviction:.2f})"]
 
-    # Boost if price is depressed (RSI low = buy more)
-    if rsi is not None and rsi < 35:
-        conf = 0.5
-        return StrategySignal("BUY", conf, weight, name,
-            f"DCA buy boosted — RSI oversold at {rsi:.1f}", sigs)
+        # RSI oversold = good entry
+        if rsi is not None and rsi < 40:
+            tech_confirms += 1
+            reasons.append(f"RSI oversold at {rsi:.1f}")
+        # Price near/above SMA20 = trend intact
+        if sma20 is not None and price >= sma20 * 0.99:
+            tech_confirms += 1
+            reasons.append(f"Price ${price:.2f} at/above SMA20 ${sma20:.2f}")
+        # MACD bullish crossover
+        if macd_cross == "bullish_crossover":
+            tech_confirms += 1
+            reasons.append("Bullish MACD crossover")
 
-    # Reduce if overbought
-    if rsi is not None and rsi > 70:
-        conf = 0.1
-        return StrategySignal("BUY", conf, weight, name,
-            f"DCA buy reduced — RSI overbought at {rsi:.1f}", sigs)
+        if tech_confirms >= 1:
+            # Confidence = thesis conviction * technical confirmation factor
+            conf = thesis_conviction * (0.5 + tech_confirms * 0.15)
+            conf = round(min(conf, 0.95), 2)
+            return StrategySignal("BUY", conf, weight, name,
+                f"Thesis-aligned BUY: {'; '.join(reasons)}", sigs)
 
-    return StrategySignal("BUY", conf, weight, name,
-        f"Regular DCA buy. RSI {f'{rsi:.1f}' if rsi else 'N/A'}", sigs)
+        # Thesis bullish but no technical confirmation yet
+        if thesis_conviction >= 0.6:
+            return StrategySignal("BUY", round(thesis_conviction * 0.4, 2), weight, name,
+                f"Thesis bullish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
+
+        return _hold(name, f"Thesis bullish but waiting for technical entry: {'; '.join(reasons)}", weight, sigs)
+
+    # BEARISH thesis: look for technical sell confirmation
+    if thesis_direction == "bearish":
+        tech_confirms = 0
+        reasons = [f"Thesis bearish (conviction={thesis_conviction:.2f})"]
+
+        # RSI overbought = good sell point
+        if rsi is not None and rsi > 65:
+            tech_confirms += 1
+            reasons.append(f"RSI overbought at {rsi:.1f}")
+        # Price below SMA20 = trend confirming
+        if sma20 is not None and price < sma20:
+            tech_confirms += 1
+            reasons.append(f"Price ${price:.2f} below SMA20 ${sma20:.2f}")
+        # MACD bearish crossover
+        if macd_cross == "bearish_crossover":
+            tech_confirms += 1
+            reasons.append("Bearish MACD crossover")
+
+        if tech_confirms >= 1:
+            conf = thesis_conviction * (0.5 + tech_confirms * 0.15)
+            conf = round(min(conf, 0.95), 2)
+            return StrategySignal("SELL", conf, weight, name,
+                f"Thesis-aligned SELL: {'; '.join(reasons)}", sigs)
+
+        if thesis_conviction >= 0.6:
+            return StrategySignal("SELL", round(thesis_conviction * 0.4, 2), weight, name,
+                f"Thesis bearish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
+
+        return _hold(name, f"Thesis bearish but waiting for technical confirmation: {'; '.join(reasons)}", weight, sigs)
+
+    return _hold(name, f"Unknown thesis direction: {thesis_direction}", weight, sigs)
+
+
+# --- Legacy strategy functions kept for replay/ensemble backward compatibility ---
+
+def dca_signal(portfolio: dict, indicators: dict, weight: float) -> StrategySignal:
+    """Small periodic buys — DEPRECATED in v2, kept for replay compatibility."""
+    return _hold("dca", "DCA disabled in v2 (thesis-driven trading)", weight)
 
 
 def sentiment_signal(news_sentiment: float | None, weight: float) -> StrategySignal:
-    """Score based on news sentiment (-1 to +1). Populated by agent.py via Claude."""
-    name = "sentiment"
-    sigs = {"sentiment_score": news_sentiment}
-
-    if news_sentiment is None:
-        return _hold(name, "No sentiment data available", weight, sigs)
-
-    if news_sentiment > 0.5:
-        conf = min(news_sentiment, 1.0)
-        return StrategySignal("BUY", round(conf * 0.7, 2), weight, name,
-            f"Positive sentiment ({news_sentiment:.2f})", sigs)
-    elif news_sentiment < -0.5:
-        conf = min(abs(news_sentiment), 1.0)
-        return StrategySignal("SELL", round(conf * 0.7, 2), weight, name,
-            f"Negative sentiment ({news_sentiment:.2f})", sigs)
-    elif news_sentiment > 0.2:
-        return StrategySignal("BUY", 0.2, weight, name,
-            f"Mildly positive sentiment ({news_sentiment:.2f})", sigs)
-    elif news_sentiment < -0.2:
-        return StrategySignal("SELL", 0.2, weight, name,
-            f"Mildly negative sentiment ({news_sentiment:.2f})", sigs)
-
-    return _hold(name, f"Neutral sentiment ({news_sentiment:.2f})", weight, sigs)
+    """Score based on news sentiment — DEPRECATED in v2, replaced by thesis_alignment."""
+    return _hold("sentiment", "Sentiment disabled in v2 (replaced by thesis_alignment)", weight)
 
 
 # --- Aggregation ---
@@ -261,8 +308,18 @@ def _apply_regime_adjustment(signal: StrategySignal, regime: dict) -> StrategySi
     elif signal.strategy == "technical_signals":
         if vol == "high":
             multiplier = 0.8
+    elif signal.strategy == "thesis_alignment":
+        # Thesis alignment gets boosted when thesis direction matches regime
+        if signal.action == "BUY" and trend == "bull":
+            multiplier = 1.15
+        elif signal.action == "SELL" and trend == "bear":
+            multiplier = 1.15
+        elif signal.action == "BUY" and trend == "bear":
+            multiplier = 0.75  # Buying against bear regime is risky
+        elif signal.action == "SELL" and trend == "bull":
+            multiplier = 0.80
     elif signal.strategy == "sentiment":
-        # Boost when sentiment direction aligns with regime
+        # Legacy — boost when sentiment direction aligns with regime
         if signal.action == "BUY" and trend == "bull":
             multiplier = 1.15
         elif signal.action == "SELL" and trend == "bear":
@@ -283,8 +340,13 @@ def evaluate_all_strategies(
     scores: dict = None,
     news_sentiment: float = None,
     regime: dict = None,
+    thesis_direction: str = None,
+    thesis_conviction: float = 0.0,
 ) -> list[StrategySignal]:
-    """Run all enabled strategies and return weighted signals."""
+    """Run all enabled strategies and return weighted signals.
+
+    v2: accepts thesis_direction and thesis_conviction for the thesis_alignment strategy.
+    """
     config = load_config()
     enabled = config["strategies_enabled"]
 
@@ -314,6 +376,15 @@ def evaluate_all_strategies(
     if "technical_signals" in enabled:
         signals.append(technical_signals_signal(indicators, weights.get("technical_signals", 0.2)))
 
+    if "thesis_alignment" in enabled:
+        signals.append(thesis_alignment_signal(
+            indicators,
+            thesis_direction or "neutral",
+            thesis_conviction,
+            weights.get("thesis_alignment", 0.25),
+        ))
+
+    # Legacy strategies — still supported for replay/ensemble backward compat
     if "dca" in enabled:
         signals.append(dca_signal(portfolio, indicators, weights.get("dca", 0.2)))
 

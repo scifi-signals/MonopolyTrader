@@ -43,9 +43,8 @@
   "strategies_enabled": [
     "momentum",
     "mean_reversion",
-    "sentiment",
     "technical_signals",
-    "dca"
+    "thesis_alignment"
   ],
   "multi_step_reasoning": false,
   "learning": {
@@ -53,7 +52,13 @@
     "review_after_every_trade": true,
     "deep_research_interval_hours": 24,
     "journal_entry_interval_hours": 12,
-    "prediction_horizon_minutes": [30, 120, 1440]
+    "prediction_horizon_minutes": [1440, 10080]
+  },
+  "event_triggers": {
+    "news_relevance_threshold": 0.7,
+    "volume_spike_threshold": 2.0,
+    "vix_change_threshold": 3.0,
+    "thesis_stale_hours": 4
   },
   "benchmarks": {
     "enabled": true,

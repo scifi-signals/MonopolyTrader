@@ -355,6 +355,58 @@ def get_bsm_signals(signal_path: str = None) -> list[dict]:
         return []
 
 
+def check_volume_spike(ticker: str = "TSLA") -> dict:
+    """Compare current volume to 20-day average. Returns ratio and spike status.
+
+    Used by the event trigger system to detect unusual activity.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1mo", interval="1d")
+        if len(hist) < 5:
+            return {"ratio": 1.0, "is_spike": False, "current": 0, "avg_20d": 0}
+
+        current_vol = int(hist["Volume"].iloc[-1])
+        avg_vol = float(hist["Volume"].tail(20).mean())
+        ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+
+        return {
+            "ratio": ratio,
+            "is_spike": ratio >= 2.0,
+            "current": current_vol,
+            "avg_20d": int(avg_vol),
+        }
+    except Exception as e:
+        logger.warning(f"Volume spike check failed: {e}")
+        return {"ratio": 1.0, "is_spike": False, "current": 0, "avg_20d": 0}
+
+
+def check_vix_change() -> dict:
+    """Check VIX change over the last session. Returns points moved.
+
+    Used by the event trigger system for VIX spike detection.
+    """
+    try:
+        vix = yf.Ticker("^VIX")
+        hist = vix.history(period="5d", interval="1d")
+        if len(hist) < 2:
+            return {"change": 0.0, "current": 0.0, "is_spike": False}
+
+        current = float(hist["Close"].iloc[-1])
+        previous = float(hist["Close"].iloc[-2])
+        change = round(current - previous, 2)
+
+        return {
+            "change": change,
+            "current": round(current, 2),
+            "previous": round(previous, 2),
+            "is_spike": abs(change) >= 3.0,
+        }
+    except Exception as e:
+        logger.warning(f"VIX change check failed: {e}")
+        return {"change": 0.0, "current": 0.0, "is_spike": False}
+
+
 def _last(series: pd.Series) -> float | None:
     """Get the last non-NaN value from a series, rounded."""
     val = series.dropna()

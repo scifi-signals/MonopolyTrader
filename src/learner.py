@@ -17,12 +17,34 @@ logger = setup_logging("learner")
 # Skeptic uses a cheap model separate from the trading model
 SKEPTIC_MODEL = "claude-haiku-4-5-20251001"
 
-# v3 structured lesson categories
+# v3 structured lesson categories (technical/signal-based)
 LESSON_CATEGORIES = [
     "signal_correct", "signal_early", "signal_late", "signal_wrong",
     "risk_sizing_error", "regime_mismatch", "external_shock",
     "stop_loss_whipsaw", "correlated_market_move", "noise_trade",
 ]
+
+# v2 causal lesson categories (news/catalyst-based)
+CAUSAL_CATEGORIES = [
+    "musk_controversy_recovery",    # TSLA drops on Musk controversy, recovers in 24-48h
+    "delivery_beat_rally",          # Delivery numbers beat expectations → rally
+    "delivery_miss_selloff",        # Delivery numbers miss → selloff
+    "regulatory_negative",          # Negative regulatory news (NHTSA probe, recall)
+    "regulatory_positive",          # Positive regulatory news (FSD approval, robotaxi permit)
+    "analyst_upgrade_drift",        # Analyst upgrade → continued drift up over days
+    "analyst_downgrade_drift",      # Analyst downgrade → continued drift down
+    "competition_pressure",         # EV competitor news weighing on TSLA
+    "earnings_surprise_positive",   # Earnings beat expectations
+    "earnings_surprise_negative",   # Earnings miss
+    "macro_driven",                 # Move driven by macro (rates, SPY, VIX) not TSLA-specific
+    "technical_level_break",        # Price broke key support/resistance
+    "musk_political_risk",          # Musk political activity affecting sentiment
+    "product_catalyst",             # Product announcement (Cybertruck, Optimus, etc.)
+    "sector_rotation",              # Money flowing in/out of EV/tech sector broadly
+]
+
+# Combined valid categories
+ALL_CATEGORIES = LESSON_CATEGORIES + CAUSAL_CATEGORIES
 
 
 def _get_client() -> Anthropic:
@@ -91,30 +113,57 @@ def _parse_json(raw: str) -> dict | list:
 
 # --- Post-Trade Review ---
 
-REVIEW_SYSTEM = """You are the learning module of MonopolyTrader, an AI trading agent. Your job is to analyze completed trades, compare the agent's hypothesis to what actually happened, and extract a specific, actionable lesson.
+REVIEW_SYSTEM = """You are the learning module of MonopolyTrader v2, an AI trading agent. Your job is to analyze completed trades and extract CAUSAL lessons about TSLA's behavior.
 
-Be brutally honest. If the trade was based on flawed reasoning, say so. If it was good reasoning but bad luck, distinguish that. The goal is to build a knowledge base that makes the agent smarter over time.
+CRITICAL FOCUS: What NEWS or CATALYST drove TSLA's price move? How much was TSLA-specific vs market-wide? The lesson must be about TSLA's behavior, NOT about the agent's behavior.
 
-IMPORTANT: Categorize every lesson into EXACTLY ONE of these categories:
-- signal_correct: signal was right and trade worked as predicted
-- signal_early: right direction but wrong timing — signal fired too soon
-- signal_late: right direction but entered too late
-- signal_wrong: signal was simply incorrect
-- risk_sizing_error: direction was right but position size was wrong
-- regime_mismatch: signal would have worked in a different market regime
-- external_shock: unpredictable external event overwhelmed the signal
+BAD lesson: "I should have been more confident" (about the agent)
+GOOD lesson: "TSLA drops 3-5% on Musk political controversy, recovers within 48h" (about TSLA)
+
+BAD lesson: "I should have held longer" (about the agent)
+GOOD lesson: "Delivery beats >5% cause 8-12% rally sustained over 1 week" (about TSLA)
+
+Categorize every lesson into EXACTLY ONE category:
+
+SIGNAL CATEGORIES (technical):
+- signal_correct: signal was right and trade worked
+- signal_early: right direction, wrong timing
+- signal_late: entered too late
+- signal_wrong: signal was incorrect
+- risk_sizing_error: direction right, size wrong
+- regime_mismatch: would have worked in different regime
+- external_shock: unpredictable event overwhelmed signal
 - stop_loss_whipsaw: stop triggered but price recovered
-- correlated_market_move: TSLA moved with broader market, not on its own signal
-- noise_trade: no real signal — low-conviction trade that shouldn't have been taken
+- correlated_market_move: TSLA moved with broader market
+- noise_trade: no real signal
+
+CAUSAL CATEGORIES (news/catalyst-driven):
+- musk_controversy_recovery: Musk controversy → drop → recovery in 24-48h
+- delivery_beat_rally: delivery numbers beat → rally
+- delivery_miss_selloff: delivery numbers miss → selloff
+- regulatory_negative: negative regulatory news
+- regulatory_positive: positive regulatory news
+- analyst_upgrade_drift: analyst upgrade → sustained drift up
+- analyst_downgrade_drift: analyst downgrade → sustained drift down
+- competition_pressure: EV competitor news weighing on TSLA
+- earnings_surprise_positive: earnings beat
+- earnings_surprise_negative: earnings miss
+- macro_driven: move driven by macro, not TSLA-specific
+- technical_level_break: price broke key support/resistance
+- musk_political_risk: Musk political activity affecting sentiment
+- product_catalyst: product announcement affecting price
+- sector_rotation: money flowing in/out of EV/tech sector
 
 Respond with JSON:
 {
   "what_i_predicted": "<summary of the hypothesis>",
   "what_actually_happened": "<what the price actually did>",
   "was_correct": <true/false>,
-  "why_right_or_wrong": "<specific analysis>",
-  "lesson": "<one clear, actionable lesson>",
-  "category": "<exactly one of the 10 categories above>",
+  "why_right_or_wrong": "<specific causal analysis — what NEWS drove the move?>",
+  "lesson": "<one clear lesson about TSLA's BEHAVIOR, not the agent's behavior>",
+  "category": "<exactly one category from the lists above>",
+  "causal_driver": "<what specific news/event/catalyst caused the price move, or 'no clear catalyst'>",
+  "tsla_specific_pct": <0-100, how much of the move was TSLA-specific vs market-wide>,
   "confidence_adjustment": {
     "<strategy_name>": <float adjustment, e.g. -0.05 or +0.03>
   }
@@ -128,6 +177,12 @@ Ask these questions:
 2. SAMPLE SIZE: How many times has this pattern occurred? If < 5, label "unvalidated".
 3. REGIME DEPENDENCY: Would this lesson work in a different rate/volatility environment?
 4. FALSIFIABILITY: What would DISPROVE this lesson?
+5. AGENT vs TSLA: Is this lesson about TSLA's behavior or about the AGENT's behavior?
+   - "I should have been more confident" → REJECT (agent behavior, not TSLA behavior)
+   - "TSLA drops 3-5% on Musk controversy" → ACCEPT (TSLA behavior pattern)
+   - "I held too long" → REJECT (agent behavior)
+   - "Post-earnings drift lasts 3-5 days" → ACCEPT (TSLA behavior pattern)
+   If the lesson is about the agent's behavior, set validated=false with reason "agent_self_referential".
 
 Respond with JSON:
 {
@@ -135,14 +190,28 @@ Respond with JSON:
   "sample_size": <estimated occurrences>,
   "validated": <true/false — does the lesson survive scrutiny?>,
   "regime_dependent": <true/false>,
-  "falsifiable_test": "<what would disprove this lesson>"
+  "falsifiable_test": "<what would disprove this lesson>",
+  "is_about_agent_behavior": <true/false — is this lesson about the agent, not TSLA?>
 }"""
 
 
-def _apply_hard_rejections(lesson_category: str, spy_change: float = 0) -> tuple[bool, str]:
+def _apply_hard_rejections(lesson_category: str, spy_change: float = 0, lesson_text: str = "") -> tuple[bool, str]:
     """Auto-reject lessons without LLM when clear confounds exist."""
     if lesson_category == "correlated_market_move" and abs(spy_change) < 0.003:
         return True, "Rejected: labeled correlated_market_move but SPY moved < 0.3%"
+
+    # v2: Reject agent-self-referential lessons
+    if lesson_text:
+        agent_phrases = [
+            "i should have", "i need to", "i was too", "i held too",
+            "i should be more", "my confidence was", "i need more conviction",
+            "i was not confident enough", "i was overly cautious",
+        ]
+        lesson_lower = lesson_text.lower()
+        for phrase in agent_phrases:
+            if phrase in lesson_lower:
+                return True, f"Rejected: lesson is about agent behavior ('{phrase}'), not TSLA behavior"
+
     return False, ""
 
 
@@ -264,6 +333,29 @@ async def review_trade(trade: dict, current_price: float) -> dict | None:
         sig_lines = [f"  {k}: {v}" for k, v in signals.items()]
         signals_text = "\nStrategy signals at time of trade:\n" + "\n".join(sig_lines)
 
+    # v2: Fetch news context from the trade period for causal analysis
+    news_context = ""
+    try:
+        from .news_feed import fetch_news_feed, format_news_for_prompt
+        feed = fetch_news_feed(config["ticker"])
+        if feed.items:
+            news_context = f"\nNews around time of trade:\n{format_news_for_prompt(feed, max_items=8)}"
+    except Exception:
+        news_context = "\nNews context unavailable."
+
+    # v2: Include thesis context if available
+    thesis_context = ""
+    try:
+        from .thesis import load_thesis
+        thesis = load_thesis()
+        if thesis.narrative:
+            thesis_context = (
+                f"\nThesis at time of trade: {thesis.direction} "
+                f"(conviction={thesis.conviction:.2f}): {thesis.narrative[:200]}"
+            )
+    except Exception:
+        pass
+
     user_prompt = f"""Review this trade:
 
 Trade: {trade['action']} {trade['shares']:.4f} TSLA @ ${trade['price']:.2f}
@@ -273,13 +365,15 @@ Confidence: {trade.get('confidence', 'N/A')}
 {signals_text}
 Hypothesis: {trade.get('hypothesis', 'None stated')}
 Reasoning: {trade.get('reasoning', 'None stated')}
-
+{thesis_context}
 Outcome:
 - Current price: ${current_price:.2f}
 - Price change since trade: ${price_change:.2f} ({price_change_pct:+.2f}%)
 - Trade P&L: ${trade.get('realized_pnl', 'still open')}
-
-What went right or wrong? What should the agent learn?"""
+{news_context}
+FOCUS ON CAUSATION: What NEWS or CATALYST drove TSLA's price move?
+How much was TSLA-specific vs market-wide? What is the CAUSAL pattern?
+The lesson must be about TSLA's behavior, NOT about the agent's behavior."""
 
     try:
         raw, model_ver = _call_claude(REVIEW_SYSTEM, user_prompt)
@@ -287,7 +381,7 @@ What went right or wrong? What should the agent learn?"""
 
         # Enforce valid category
         category = review.get("category", "noise_trade")
-        if category not in LESSON_CATEGORIES:
+        if category not in ALL_CATEGORIES:
             category = "noise_trade"
 
         # Replay source propagation: if this trade came from replay,
@@ -329,8 +423,8 @@ What went right or wrong? What should the agent learn?"""
             except Exception:
                 pass
 
-        # Hard rejection check
-        rejected, reason = _apply_hard_rejections(category, spy_change)
+        # Hard rejection check (v2: includes agent-self-referential check)
+        rejected, reason = _apply_hard_rejections(category, spy_change, lesson.get("lesson", ""))
         if rejected:
             lesson["skeptic_review"] = {"validated": False, "reason": reason}
             lesson["weight"] = 0.3
@@ -338,6 +432,13 @@ What went right or wrong? What should the agent learn?"""
         else:
             # Run skeptic challenge (replay-aware)
             skeptic = await skeptic_challenge(lesson, trade, spy_change, is_replay=is_replay)
+            # v2: Additional rejection if skeptic says it's about agent behavior
+            if skeptic.get("is_about_agent_behavior"):
+                skeptic["validated"] = False
+                skeptic["simpler_explanation"] = (
+                    skeptic.get("simpler_explanation", "") +
+                    " [Rejected: lesson is about agent behavior, not TSLA behavior]"
+                )
             lesson["skeptic_review"] = skeptic
             if not skeptic.get("validated", True):
                 # Replay lessons get a lighter penalty since the skeptic has
@@ -644,7 +745,7 @@ What should the agent learn about WHEN to hold vs WHEN to act?"""
         review = _parse_json(raw)
 
         category = review.get("category", "noise_trade")
-        if category not in LESSON_CATEGORIES:
+        if category not in ALL_CATEGORIES:
             category = "noise_trade"
 
         lesson = {

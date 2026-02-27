@@ -1,13 +1,19 @@
-"""AI decision engine — Claude-powered trading brain."""
+"""AI decision engine — Claude-powered trading brain.
+
+v2: Two-phase Analyst/Trader architecture for thesis-driven trading.
+v1 functions (make_decision, make_decision_multi_step) kept for ensemble/replay compatibility.
+"""
 
 import json
 import os
 import yfinance as yf
 from anthropic import Anthropic
 from .utils import load_config, format_currency, iso_now, setup_logging, call_ai_with_fallback
-from .knowledge_base import get_relevant_knowledge, add_prediction
+from .knowledge_base import get_relevant_knowledge, get_relevant_research, add_prediction
 from .market_data import get_bsm_signals
 from .strategies import StrategySignal, calculate_signal_balance
+from .news_feed import NewsFeed, format_news_for_prompt
+from .thesis import Thesis, load_thesis, save_thesis, thesis_changed_meaningfully
 
 logger = setup_logging("agent")
 
@@ -762,3 +768,359 @@ If BUY or SELL, specify exact shares (fractional OK). Be conservative on sizing.
                 )
 
     return decision
+
+
+# ─── v2: Thesis-Driven Two-Phase Engine ──────────────────────────────────────
+
+ANALYST_SYSTEM = """You are the ANALYST module of MonopolyTrader v2. Your job is to understand WHY TSLA is moving and maintain a running thesis about the stock.
+
+You focus on CAUSATION, not prediction. Your output is a thesis — a narrative about what is driving TSLA's price and what would change it.
+
+You receive:
+- Current thesis (your previous assessment)
+- News feed (classified, scored)
+- Research findings (earnings, catalysts, correlations, seasonal patterns, sector context)
+- Price action and technical data
+- Macro regime
+
+Your job:
+1. What NEWS or CATALYST is driving TSLA right now?
+2. Has the current thesis been confirmed, challenged, or invalidated?
+3. What are the key price levels (support/resistance) and what would break them?
+4. What is the bull case and bear case?
+5. What would invalidate your thesis?
+
+You do NOT recommend trades. You build the thesis that the Trader module uses.
+
+Respond with JSON:
+{
+  "narrative": "<2-3 sentence summary of what's driving TSLA right now>",
+  "direction": "bearish" | "bullish" | "neutral",
+  "conviction": <float 0.0-1.0>,
+  "key_levels": {"support": [<prices>], "resistance": [<prices>]},
+  "bull_case": "<what would make TSLA go up>",
+  "bear_case": "<what would make TSLA go down>",
+  "invalidation": "<what specific event or price level would prove this thesis wrong>",
+  "key_catalysts": ["<list of catalysts currently affecting TSLA>"],
+  "thesis_change_reason": "<why you changed (or didn't change) the thesis>",
+  "news_citations": ["<specific news items that informed this update>"]
+}"""
+
+
+TRADER_SYSTEM = """You are the TRADER module of MonopolyTrader v2. You receive a thesis about WHY TSLA is moving and use technical indicators to decide WHEN to act.
+
+The thesis determines DIRECTION. Technicals determine TIMING and ENTRY.
+
+Rules:
+- If thesis is bearish, do NOT buy. Look for sell signals or hold.
+- If thesis is bullish, look for technical confirmation to buy (dip to support, RSI oversold, MACD crossover).
+- If thesis is neutral, only act on strong technical signals.
+- The thesis conviction weights your confidence. High thesis conviction + technical confirmation = high-confidence trade.
+- Low thesis conviction = smaller positions or HOLD.
+
+RISK RULES (v3):
+- Max position: 65% of portfolio value
+- Max single trade: 20% of portfolio value
+- Min cash reserve: 15% of portfolio value
+- Position sizing: inverse ATR (wider stop = smaller position, max 2% risk per trade)
+- Cooldown: 15 min between trades
+- If daily loss exceeds 8%, stop trading
+- Macro gate: if SPY down >2% or VIX >30, require confidence >0.80 for BUY
+
+SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — not disagreeing. A single strategy at >0.70 confidence with no opposing signals is a clear trade.
+
+ANTI-PARALYSIS: If a <hold_streak_warning> appears, lower your threshold and act on signals with confidence >0.50.
+
+Respond ONLY with valid JSON:
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "shares": <float, 0 if HOLD>,
+  "confidence": <float 0-1>,
+  "strategy": "<primary strategy driving this decision>",
+  "hypothesis": "<I predict TSLA will [direction] by [amount] over [timeframe] because [thesis + technical reasoning]>",
+  "reasoning": "<how thesis + technicals combine to justify this decision>",
+  "knowledge_applied": ["<lesson_id>"],
+  "risk_note": "<any risk concerns>",
+  "predictions": {
+    "1day": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>},
+    "1week": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>}
+  },
+  "thesis_alignment": "<how this trade aligns with or contradicts the current thesis>",
+  "hold_analysis": <REQUIRED if action is HOLD, null otherwise> {
+    "opportunity_cost": "<what gain are you forgoing?>",
+    "downside_protection": "<what risk are you avoiding?>",
+    "signal_balance": "<buy vs sell signal balance>",
+    "decision_boundary": "<what would flip this to BUY or SELL?>"
+  }
+}"""
+
+
+def _strip_code_fences(raw: str) -> str:
+    """Strip markdown code fences from Claude response."""
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+    return raw.strip()
+
+
+def run_analyst(
+    current_thesis: Thesis,
+    news_feed: NewsFeed,
+    market_data: dict,
+    regime: dict = None,
+    trigger_reason: str = "",
+) -> Thesis:
+    """Phase 1: Update the market thesis based on news, research, and price action.
+
+    Does NOT recommend trades. Returns an updated Thesis object.
+    """
+    config = load_config()
+    ticker = config["ticker"]
+
+    # Get research findings
+    research_text = get_relevant_research()
+
+    # Format news
+    news_text = format_news_for_prompt(news_feed)
+
+    # Format regime
+    r = regime or market_data.get("regime", {})
+    regime_text = (
+        f"Trend: {r.get('trend', 'unknown')} | "
+        f"Volatility: {r.get('volatility', 'unknown')} | "
+        f"VIX: {r.get('vix', 0):.1f}"
+    )
+
+    user_prompt = f"""<current_thesis>
+{current_thesis.format_for_prompt()}
+</current_thesis>
+
+<trigger>
+Thesis update triggered by: {trigger_reason or 'scheduled check'}
+</trigger>
+
+<news_feed>
+{news_text}
+</news_feed>
+
+<research_findings>
+{research_text}
+</research_findings>
+
+<market_data>
+{_format_market_data(market_data)}
+</market_data>
+
+<macro_regime>
+{regime_text}
+</macro_regime>
+
+Update the thesis for {ticker}. What is driving the stock right now? Has anything changed?
+If the thesis is still valid, say so and explain why. If it needs updating, explain what changed."""
+
+    try:
+        logger.info(f"Analyst: updating thesis (trigger: {trigger_reason})")
+        raw, model_used = call_ai_with_fallback(
+            system=ANALYST_SYSTEM,
+            user=user_prompt,
+            max_tokens=1200,
+            config=config,
+        )
+        raw = _strip_code_fences(raw)
+        result = json.loads(raw)
+
+        # Build updated thesis
+        new_thesis = Thesis(
+            narrative=result.get("narrative", current_thesis.narrative),
+            direction=result.get("direction", current_thesis.direction),
+            conviction=result.get("conviction", current_thesis.conviction),
+            key_levels=result.get("key_levels", current_thesis.key_levels),
+            bull_case=result.get("bull_case", current_thesis.bull_case),
+            bear_case=result.get("bear_case", current_thesis.bear_case),
+            invalidation=result.get("invalidation", current_thesis.invalidation),
+            key_catalysts=result.get("key_catalysts", current_thesis.key_catalysts),
+            updated_by="analyst",
+        )
+
+        # Save with reason
+        change_reason = result.get("thesis_change_reason", trigger_reason)
+        save_thesis(new_thesis, reason=change_reason)
+
+        logger.info(
+            f"Analyst: thesis updated — {new_thesis.direction} "
+            f"conviction={new_thesis.conviction:.2f}, "
+            f"reason={change_reason[:80]}"
+        )
+
+        return new_thesis
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Analyst: failed to parse response: {e}")
+        return current_thesis
+    except Exception as e:
+        logger.error(f"Analyst: failed: {e}")
+        return current_thesis
+
+
+def run_trader(
+    thesis: Thesis,
+    market_data: dict,
+    signals: list[StrategySignal],
+    aggregate: StrategySignal,
+    portfolio: dict,
+    knowledge: dict = None,
+    macro_gate: dict = None,
+    regime: dict = None,
+    hold_streak: dict = None,
+) -> dict:
+    """Phase 2: Make a trade decision based on thesis + technical timing.
+
+    The thesis determines direction. Technicals determine timing.
+    Returns a decision dict compatible with the v1 format.
+    """
+    config = load_config()
+    ticker = config["ticker"]
+
+    if knowledge is None:
+        knowledge = get_relevant_knowledge(market_data)
+
+    # BSM signals
+    bsm_signals = get_bsm_signals()
+    bsm_section = ""
+    if bsm_signals:
+        bsm_section = f"\n<bsm_signals>\n{_format_bsm_signals(bsm_signals)}\n</bsm_signals>\n"
+
+    # Macro section
+    macro_section = ""
+    if regime or macro_gate:
+        r = regime or market_data.get("regime", {})
+        mg = macro_gate or {}
+        macro_section = f"""
+<macro_regime>
+Trend: {r.get('trend', 'unknown')} | Volatility: {r.get('volatility', 'unknown')} | VIX: {r.get('vix', 0):.1f}
+SPY Daily Change: {mg.get('spy_change_pct', 0)*100:.2f}%
+Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 'Normal'}
+</macro_regime>
+"""
+
+    # Hold streak warning
+    hold_streak_section = build_hold_streak_warning(hold_streak)
+
+    max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
+
+    user_prompt = f"""<thesis>
+{thesis.format_for_prompt()}
+</thesis>
+
+<market_data>
+{_format_market_data(market_data)}
+</market_data>
+{macro_section}
+<strategy_signals>
+{_format_signals(signals, aggregate)}
+</strategy_signals>
+
+<portfolio>
+{_format_portfolio(portfolio)}
+</portfolio>
+
+<relevant_knowledge>
+{_format_knowledge(knowledge)}
+</relevant_knowledge>
+{bsm_section}
+{hold_streak_section}The thesis says {thesis.direction.upper()} with conviction {thesis.conviction:.2f}.
+Use technical signals to decide IF and WHEN to act on this thesis.
+Max trade = 20% of portfolio value = {format_currency(max_trade)}.
+Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
+Respond with JSON only."""
+
+    try:
+        logger.info(f"Trader: making decision (thesis={thesis.direction}, conviction={thesis.conviction:.2f})")
+        raw, model_used = call_ai_with_fallback(
+            system=TRADER_SYSTEM,
+            user=user_prompt,
+            max_tokens=1500,
+            config=config,
+        )
+        raw = _strip_code_fences(raw)
+        decision = json.loads(raw)
+
+        logger.info(
+            f"Trader Decision: {decision.get('action')} "
+            f"{decision.get('shares', 0):.4f} shares, "
+            f"confidence={decision.get('confidence', 0):.2f}, "
+            f"thesis_alignment={decision.get('thesis_alignment', 'N/A')[:60]}"
+        )
+
+        # Record predictions (v2 horizons: 1day, 1week)
+        predictions = decision.get("predictions", {})
+        if predictions and any(predictions.values()):
+            pred_record = {
+                "timestamp": iso_now(),
+                "price_at_prediction": market_data.get("current", {}).get("price", 0),
+                "predictions": predictions,
+                "reasoning": decision.get("hypothesis", ""),
+                "outcomes": {k: None for k in predictions},
+                "linked_trade": None,
+                "model_version": config["anthropic_model"],
+            }
+            saved = add_prediction(pred_record)
+            decision["_prediction_id"] = saved["id"]
+
+        # Validate HOLD analysis
+        if decision.get("action") == "HOLD":
+            hold_analysis = decision.get("hold_analysis")
+            if not hold_analysis or not isinstance(hold_analysis, dict):
+                decision["hold_analysis"] = {
+                    "opportunity_cost": decision.get("reasoning", "Not specified"),
+                    "downside_protection": decision.get("risk_note", "Not specified"),
+                    "signal_balance": f"Thesis: {thesis.direction} conviction={thesis.conviction:.2f}",
+                    "decision_boundary": decision.get("thesis_alignment", "Not specified"),
+                }
+
+        # Attach metadata
+        decision["_sentiment_score"] = decision.get("sentiment_score")
+        decision["_model_version"] = config["anthropic_model"]
+        decision["_thesis_version"] = thesis.version
+        decision["_thesis_direction"] = thesis.direction
+        decision["_thesis_conviction"] = thesis.conviction
+
+        # BSM conviction cap
+        if bsm_signals and decision.get("action") == "BUY":
+            bearish_bsm = [s for s in bsm_signals if s.get("direction") == "bearish"]
+            if bearish_bsm:
+                current_price = market_data.get("current", {}).get("price", 0)
+                bsm_cap_pct = config.get("risk_params", {}).get("bsm_conviction_cap_pct", 0.10)
+                bsm_max_value = portfolio.get("total_value", 1000) * bsm_cap_pct
+                bsm_max_shares = bsm_max_value / current_price if current_price > 0 else 0
+                if decision.get("shares", 0) > bsm_max_shares:
+                    decision["shares"] = round(bsm_max_shares, 4)
+                    decision["risk_note"] = (
+                        decision.get("risk_note", "") +
+                        f" [BSM conviction cap applied: {bsm_cap_pct*100:.0f}%]"
+                    )
+
+        return decision
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Trader: failed to parse response: {e}")
+        return _error_hold("Trader JSON parse error")
+    except Exception as e:
+        logger.error(f"Trader: failed: {e}")
+        return _error_hold(f"Trader error: {e}")
+
+
+def _error_hold(reason: str) -> dict:
+    """Return a safe HOLD decision on error."""
+    return {
+        "action": "HOLD",
+        "shares": 0,
+        "confidence": 0,
+        "strategy": "error",
+        "hypothesis": f"Error — defaulting to HOLD: {reason}",
+        "reasoning": reason,
+        "knowledge_applied": [],
+        "risk_note": f"Error: {reason}",
+        "predictions": {},
+    }

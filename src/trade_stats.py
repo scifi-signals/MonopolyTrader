@@ -57,13 +57,17 @@ def _is_winning_trade(txn: dict) -> bool | None:
         if pnl is not None:
             return pnl >= 0
     elif txn["action"] == "BUY":
-        # A BUY is winning if a subsequent SELL of the same ticker made money,
-        # or if unrealized P&L is positive. For simplicity, check if confidence
-        # matched outcome via later review.
+        # A BUY is winning if the review says the signal was correct.
+        # Reviews use 'was_correct' boolean field (not 'category').
         review = txn.get("review")
         if review and isinstance(review, dict):
+            was_correct = review.get("was_correct")
+            if was_correct is not None:
+                return bool(was_correct)
+            # Fallback: check category field for forward compatibility
             category = review.get("category", "")
-            return category in ("signal_correct",)
+            if category:
+                return category in ("signal_correct",)
         # No review yet — can't score
         return None
     return None

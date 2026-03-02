@@ -428,6 +428,8 @@ def run_cycle_v2():
                     f"| Cash: {format_currency(result['portfolio']['cash'])} "
                     f"| Value: {format_currency(result['portfolio']['total_value'])}"
                 )
+                # Reset hold streak by logging a trade_executed entry
+                _log_hold_streak_reset(market_data)
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
@@ -598,66 +600,28 @@ def run_cycle():
             action = "HOLD"
             _log_hold_decision(decision, market_data, signals, "earnings_blackout")
 
-        # 14. Hard override: force minimum BUY after extreme hold streaks
-        #     Respects macro gate and earnings blackout (those are real safety stops).
-        streak_override_holds = config.get("risk_params", {}).get("hold_streak_hard_override_holds", 25)
-        streak_override_hours = config.get("risk_params", {}).get("hold_streak_hard_override_hours", 72)
-        hard_override_fired = False
-        if (
-            action == "HOLD"
-            and not macro_gate["gate_active"]
-            and not earnings_blocked
-            and current_price > 0
-        ):
-            streak_holds = hold_streak.get("consecutive_holds", 0)
-            streak_hours = hold_streak.get("last_trade_hours_ago")
-            if streak_holds >= streak_override_holds or (streak_hours and streak_hours >= streak_override_hours):
-                # Force a minimum-sized BUY (5% of portfolio)
-                min_trade_value = portfolio.get("total_value", 1000) * 0.05
-                forced_shares = round(min_trade_value / current_price, 4)
-                if forced_shares > 0:
-                    trigger = f"{streak_holds} holds" if streak_holds >= streak_override_holds else f"{streak_hours:.0f}h without trade"
-                    logger.warning(
-                        f"HARD OVERRIDE: {trigger} exceeds threshold. "
-                        f"Forcing minimum BUY of {forced_shares:.4f} shares."
-                    )
-                    action = "BUY"
-                    shares = forced_shares
-                    hard_override_fired = True
-                    decision["strategy"] = "hold_streak_override"
-                    decision["reasoning"] = (
-                        f"Hard override triggered: {trigger}. "
-                        f"Forced minimum BUY to break confidence death spiral."
-                    )
-                    decision["confidence"] = 0.50
+        # 14. (Hard override removed — was forcing panic BUYs with 12% win rate.
+        #     The statistical constraint system now handles position sizing instead.)
 
         # 15. Cap shares by ATR-sized max
         if action == "BUY" and shares > max_shares:
             logger.info(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f} shares")
             shares = max_shares
 
-        # 16. Tag streak-breaking trades for performance tracking
-        if action in ("BUY", "SELL") and hold_streak.get("consecutive_holds", 0) >= 5:
-            decision["_streak_breaker"] = {
-                "consecutive_holds_at_break": hold_streak["consecutive_holds"],
-                "missed_gain_pct": hold_streak["missed_gain_pct"],
-                "last_trade_hours_ago": hold_streak.get("last_trade_hours_ago"),
-                "hard_override": hard_override_fired,
-            }
-
-        # 17. Execute or log HOLD
+        # 16. Execute or log HOLD
         if action in ("BUY", "SELL") and shares > 0:
             decision["_vix"] = vix  # Pass VIX for slippage calculation
             decision["_regime"] = regime  # Pass regime for transaction record
             result = execute_trade(action, shares, current_price, decision)
             if result["status"] == "executed":
                 txn = result["transaction"]
-                streak_tag = " [STREAK-BREAKER]" if decision.get("_streak_breaker") else ""
                 logger.info(
-                    f"EXECUTED{streak_tag}: {action} {shares:.4f} @ ${txn['price']:.2f} "
+                    f"EXECUTED: {action} {shares:.4f} @ ${txn['price']:.2f} "
                     f"| Cash: {format_currency(result['portfolio']['cash'])} "
                     f"| Value: {format_currency(result['portfolio']['total_value'])}"
                 )
+                # Reset hold streak by logging a trade_executed entry
+                _log_hold_streak_reset(market_data)
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
@@ -810,6 +774,23 @@ def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
     }
     holds.append(entry)
     # Keep last 200
+    if len(holds) > 200:
+        holds = holds[-200:]
+    save_json(path, holds)
+
+
+def _log_hold_streak_reset(market_data: dict):
+    """Add a trade_executed entry to hold_log.json to reset the consecutive hold count."""
+    from .utils import load_json, save_json
+    path = DATA_DIR / "hold_log.json"
+    holds = load_json(path, default=[])
+    holds.append({
+        "timestamp": iso_now(),
+        "reason": "trade_executed",
+        "price_at_hold": market_data.get("current", {}).get("price", 0),
+        "counterfactual_scored": False,
+        "counterfactual_outcome": None,
+    })
     if len(holds) > 200:
         holds = holds[-200:]
     save_json(path, holds)

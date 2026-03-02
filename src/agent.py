@@ -40,15 +40,9 @@ PREDICTION TRACK RECORD: Your prediction accuracy is shown in the knowledge sect
 
 Be a scientific instrument, not a storyteller. Base decisions on data, not narratives.
 
-HOLD IS AN ACTIVE DECISION. When you decide to HOLD, you are choosing NOT to act despite available signals. This is a deliberate choice with opportunity cost. You MUST justify every HOLD with the same rigor as a BUY or SELL.
+SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — they have no opinion. They are NOT disagreeing with active signals. A single strategy at >0.70 confidence with no opposing signals is a clear trade. But if no strategy has a strong signal, HOLD is the correct decision.
 
-SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — they have no opinion. They are NOT disagreeing with active signals. If momentum says BUY at 0.75 confidence and three other strategies say HOLD, that means ONE strategy has a strong signal and THREE have nothing to say. That is NOT "only 1 of 5 agrees." Do not use the number of abstaining strategies as a reason to HOLD. Judge the quality and confidence of the ACTIVE signals on their own merits. A single strategy at >0.70 confidence with no opposing signals is a clear trade.
-
-ANTI-PARALYSIS: If a <hold_streak_warning> appears in the data, your excessive caution is proven to be costing money. Respond by:
-- Lowering your confidence threshold: act on any active signal with confidence >0.50
-- A single strategy at >0.60 confidence with no opposing signals is a CLEAR TRADE
-- Your prediction accuracy improves by trading more, not by waiting for perfection
-- Prefer a small BUY over another HOLD when the signal balance is positive
+HOLD IS VALID: Holding cash in a declining or choppy market is a legitimate strategy. Do not trade out of guilt or pressure — only trade when signals genuinely support it. A <hold_context> section may appear showing your hold vs trade accuracy. Use it to calibrate, not to panic.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -276,26 +270,34 @@ def _fetch_news(ticker: str) -> str:
 
 
 def build_hold_streak_warning(hold_streak: dict) -> str:
-    """Build the <hold_streak_warning> prompt section from hold streak stats.
+    """Build the <hold_context> prompt section from hold streak stats.
 
-    Returns empty string if streak < 5 or hold_streak is None.
-    Used by both single-step and multi-step decision paths.
+    Provides balanced, data-driven context about hold vs trade accuracy.
+    Does NOT pressure the agent to trade — just presents the data.
+    Returns empty string if streak < 3 or hold_streak is None.
     """
-    if not hold_streak or hold_streak.get("consecutive_holds", 0) < 5:
+    if not hold_streak or hold_streak.get("consecutive_holds", 0) < 3:
         return ""
     hs = hold_streak
-    section = "\n<hold_streak_warning>\n"
-    section += f"ATTENTION: You have chosen HOLD for {hs['consecutive_holds']} consecutive decisions.\n"
+    section = "\n<hold_context>\n"
+    section += f"You have held for {hs['consecutive_holds']} consecutive decisions.\n"
     if hs.get("last_trade_hours_ago") is not None:
         section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
-    section += f"Your recent counterfactual scorecard (last 20 scored holds):\n"
-    section += f"  Missed gains (should have traded): {hs['recent_missed_gains']} ({hs['missed_gain_pct']}%)\n"
-    section += f"  Correct holds (right to wait): {hs['recent_correct_holds']}\n"
-    if hs["missed_gain_pct"] > 55:
-        section += "\nYour holds are WRONG more often than right. You are leaving money on the table. Lower your conviction threshold and act on signals with confidence >0.50.\n"
-    if hs.get("last_trade_hours_ago") and hs["last_trade_hours_ago"] > 24:
-        section += "\nYou have not traded in over 24 hours. This is excessive caution. Find a trade.\n"
-    section += "</hold_streak_warning>\n"
+
+    missed = hs.get("recent_missed_gains", 0)
+    correct = hs.get("recent_correct_holds", 0)
+    total_scored = missed + correct
+    if total_scored > 0:
+        section += f"Recent hold scorecard ({total_scored} scored):\n"
+        section += f"  Correct holds: {correct} ({round(correct/total_scored*100)}%)\n"
+        section += f"  Missed gains: {missed} ({round(missed/total_scored*100)}%)\n"
+        if correct >= missed:
+            section += "Your holds have been more right than wrong. Continue holding if signals are weak.\n"
+        elif missed > correct * 1.5 and total_scored >= 10:
+            section += "You are missing some opportunities. Consider acting on strong signals (confidence >0.65).\n"
+
+    section += "Remember: holding cash in a declining market is a winning strategy. Only trade on genuine signals.\n"
+    section += "</hold_context>\n"
     return section
 
 
@@ -829,7 +831,7 @@ RISK RULES (v3):
 
 SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — not disagreeing. A single strategy at >0.70 confidence with no opposing signals is a clear trade.
 
-ANTI-PARALYSIS: If a <hold_streak_warning> appears, lower your threshold and act on signals with confidence >0.50.
+HOLD IS VALID: Holding cash in a declining or choppy market is a legitimate strategy. Do not trade out of guilt or pressure. A <hold_context> section may appear showing your hold vs trade accuracy. Use it to calibrate.
 
 Respond ONLY with valid JSON:
 {

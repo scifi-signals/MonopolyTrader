@@ -870,10 +870,12 @@ def run_analyst(
     market_data: dict,
     regime: dict = None,
     trigger_reason: str = "",
+    lessons_text: str = "",
 ) -> Thesis:
     """Phase 1: Update the market thesis based on news, research, and price action.
 
     Does NOT recommend trades. Returns an updated Thesis object.
+    lessons_text: recent validated lessons from trades (Connection 7).
     """
     config = load_config()
     ticker = config["ticker"]
@@ -891,6 +893,16 @@ def run_analyst(
         f"Volatility: {r.get('volatility', 'unknown')} | "
         f"VIX: {r.get('vix', 0):.1f}"
     )
+
+    # Format lessons section (Connection 7: lessons → analyst)
+    lessons_section = ""
+    if lessons_text:
+        lessons_section = f"""
+<recent_trade_lessons>
+RECENT LESSONS FROM YOUR TRADES — consider whether these contradict or support your current thesis:
+{lessons_text}
+</recent_trade_lessons>
+"""
 
     user_prompt = f"""<current_thesis>
 {current_thesis.format_for_prompt()}
@@ -915,7 +927,7 @@ Thesis update triggered by: {trigger_reason or 'scheduled check'}
 <macro_regime>
 {regime_text}
 </macro_regime>
-
+{lessons_section}
 Update the thesis for {ticker}. What is driving the stock right now? Has anything changed?
 If the thesis is still valid, say so and explain why. If it needs updating, explain what changed."""
 
@@ -973,10 +985,12 @@ def run_trader(
     macro_gate: dict = None,
     regime: dict = None,
     hold_streak: dict = None,
+    stats_summary: str = "",
 ) -> dict:
     """Phase 2: Make a trade decision based on thesis + technical timing.
 
     The thesis determines direction. Technicals determine timing.
+    stats_summary: formatted trade statistics for meta-knowledge (Connection 6).
     Returns a decision dict compatible with the v1 format.
     """
     config = load_config()
@@ -1007,6 +1021,16 @@ Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 
     # Hold streak warning
     hold_streak_section = build_hold_streak_warning(hold_streak)
 
+    # Stats meta-knowledge section (Connection 6: stats → trader prompt)
+    stats_section = ""
+    if stats_summary:
+        stats_section = f"""
+<meta_knowledge>
+YOUR HISTORICAL PERFORMANCE BY SETUP TYPE — use this to avoid repeating mistakes:
+{stats_summary}
+</meta_knowledge>
+"""
+
     max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
 
     user_prompt = f"""<thesis>
@@ -1028,6 +1052,7 @@ Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 
 <relevant_knowledge>
 {_format_knowledge(knowledge)}
 </relevant_knowledge>
+{stats_section}
 {bsm_section}
 {hold_streak_section}The thesis says {thesis.direction.upper()} with conviction {thesis.conviction:.2f}.
 Use technical signals to decide IF and WHEN to act on this thesis.

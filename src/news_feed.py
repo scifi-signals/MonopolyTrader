@@ -1,12 +1,18 @@
 """News feed — multi-source news aggregation with classification and scoring."""
 
 import re
+import json
 import hashlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from .utils import setup_logging
 
 logger = setup_logging("news_feed")
+
+# Persistent tracker for cross-cycle news deduplication
+_SEEN_NEWS_PATH = Path(__file__).parent.parent / "data" / "seen_news.json"
+_SEEN_NEWS_MAX_AGE_HOURS = 48
 
 # Catalyst type keywords — lowercase matching against headline + summary
 CATALYST_KEYWORDS = {
@@ -68,6 +74,7 @@ class NewsItem:
     summary: str = ""
     catalyst_type: str = "unknown"
     relevance: float = 0.0  # 0.0 to 1.0
+    is_new: bool = True  # False if seen in a previous cycle
     _hash: str = ""
 
     def to_dict(self) -> dict:
@@ -79,6 +86,7 @@ class NewsItem:
             "summary": self.summary,
             "catalyst_type": self.catalyst_type,
             "relevance": self.relevance,
+            "is_new": self.is_new,
         }
 
 
@@ -98,11 +106,27 @@ class NewsFeed:
             reverse=True,
         )
 
+    @property
+    def new_items(self) -> list[NewsItem]:
+        """Only items not seen in previous cycles."""
+        return [i for i in self.items if i.is_new]
+
+    @property
+    def new_high_impact(self) -> list[NewsItem]:
+        """High-impact items not seen in previous cycles."""
+        return sorted(
+            [i for i in self.items if i.relevance > 0.7 and i.is_new],
+            key=lambda x: x.relevance,
+            reverse=True,
+        )
+
     def to_dict(self) -> dict:
         return {
             "fetched_at": self.fetched_at,
             "total_items": len(self.items),
+            "new_items_count": len(self.new_items),
             "high_impact_count": len(self.high_impact),
+            "new_high_impact_count": len(self.new_high_impact),
             "source_counts": self.source_counts,
             "items": [i.to_dict() for i in self.items],
             "high_impact": [i.to_dict() for i in self.high_impact],
@@ -311,10 +335,61 @@ def _deduplicate(items: list[NewsItem]) -> list[NewsItem]:
     return unique
 
 
+def _load_seen_news() -> dict:
+    """Load previously seen news hashes from disk. Returns {hash: timestamp_iso}."""
+    if not _SEEN_NEWS_PATH.exists():
+        return {}
+    try:
+        with open(_SEEN_NEWS_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _save_seen_news(seen: dict) -> None:
+    """Save seen news hashes to disk, pruning entries older than max age."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=_SEEN_NEWS_MAX_AGE_HOURS)
+    pruned = {}
+    for h, entry in seen.items():
+        try:
+            # Entry is {ts: iso_string, title: str}
+            ts = entry.get("ts", "") if isinstance(entry, dict) else str(entry)
+            seen_at = datetime.fromisoformat(ts)
+            if seen_at > cutoff:
+                pruned[h] = entry
+        except (ValueError, TypeError, AttributeError):
+            continue  # drop malformed entries
+    _SEEN_NEWS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_SEEN_NEWS_PATH, "w") as f:
+        json.dump(pruned, f)
+
+
+def _mark_seen_items(items: list[NewsItem], seen: dict) -> int:
+    """Mark items as not-new if their hash (or a fuzzy match) was seen before.
+    Returns count of items marked as previously seen."""
+    seen_count = 0
+    for item in items:
+        h = item._hash
+        if h in seen:
+            item.is_new = False
+            seen_count += 1
+            continue
+        # Also check fuzzy similarity against seen headlines stored alongside hashes
+        # (We store title snippets for fuzzy matching)
+        for seen_hash, seen_ts in seen.items():
+            if isinstance(seen_ts, dict) and _is_similar(item.title, seen_ts.get("title", "")):
+                item.is_new = False
+                seen_count += 1
+                break
+    return seen_count
+
+
 def fetch_news_feed(ticker: str = "TSLA") -> NewsFeed:
     """Fetch, classify, score, and deduplicate news from all sources.
 
     Returns a NewsFeed with all items classified and high_impact filtered.
+    Items seen in previous cycles are marked is_new=False.
     """
     all_items = []
     source_counts = {}
@@ -336,8 +411,19 @@ def fetch_news_feed(ticker: str = "TSLA") -> NewsFeed:
         item.relevance = _score_relevance(item.title, item.summary)
         item._hash = _headline_hash(item.title)
 
-    # Deduplicate
+    # Within-cycle deduplicate
     unique_items = _deduplicate(all_items)
+
+    # Cross-cycle dedup: mark items seen in previous cycles
+    seen = _load_seen_news()
+    previously_seen = _mark_seen_items(unique_items, seen)
+
+    # Record all current items as seen for future cycles
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for item in unique_items:
+        if item._hash not in seen:
+            seen[item._hash] = {"ts": now_iso, "title": item.title[:100]}
+    _save_seen_news(seen)
 
     # Sort by relevance descending
     unique_items.sort(key=lambda x: x.relevance, reverse=True)
@@ -348,11 +434,13 @@ def fetch_news_feed(ticker: str = "TSLA") -> NewsFeed:
         source_counts=source_counts,
     )
 
-    high_count = len(feed.high_impact)
+    new_count = len(feed.new_items)
+    new_high = len(feed.new_high_impact)
     logger.info(
         f"News feed: {len(unique_items)} items ({len(all_items)} raw, "
-        f"{len(all_items) - len(unique_items)} deduped), "
-        f"{high_count} high-impact"
+        f"{len(all_items) - len(unique_items)} within-cycle deduped, "
+        f"{previously_seen} previously seen), "
+        f"{new_count} new, {new_high} new high-impact"
     )
 
     return feed

@@ -27,7 +27,7 @@ from .strategies import evaluate_all_strategies, aggregate_signals, calculate_si
 from .agent import make_decision, make_decision_multi_step, run_analyst, run_trader
 from .knowledge_base import (
     initialize as init_kb, get_strategy_scores, get_relevant_knowledge,
-    get_knowledge_summary,
+    get_knowledge_summary, get_lessons_for_analyst, get_prediction_accuracy,
 )
 from .learner import (
     review_trade, review_predictions, discover_patterns,
@@ -37,6 +37,11 @@ from .learner import (
 from .researcher import run_full_research
 from .news_feed import fetch_news_feed
 from .thesis import load_thesis, save_thesis, create_initial_thesis, thesis_changed_meaningfully
+from .trade_stats import (
+    compute_and_save_trade_stats, generate_and_save_constraints,
+    load_trade_stats, load_constraints, format_stats_for_prompt,
+    apply_statistical_constraints,
+)
 
 logger = setup_logging("main")
 
@@ -79,14 +84,14 @@ def evaluate_triggers(
     trigger_config = config.get("event_triggers", {})
     now = datetime.now(timezone.utc)
 
-    # 1. High-impact news
+    # 1. High-impact news (only NEW items trigger — not previously seen ones)
     news_threshold = trigger_config.get("news_relevance_threshold", 0.7)
-    high_impact = [i for i in news_feed.items if i.relevance > news_threshold]
-    if high_impact:
+    new_high_impact = [i for i in news_feed.items if i.relevance > news_threshold and i.is_new]
+    if new_high_impact:
         triggers.append({
             "type": "news_high_impact",
-            "detail": f"{len(high_impact)} items above {news_threshold}",
-            "items": [i.title[:80] for i in high_impact[:3]],
+            "detail": f"{len(new_high_impact)} new items above {news_threshold}",
+            "items": [i.title[:80] for i in new_high_impact[:3]],
         })
 
     # 2. Price level break (thesis support/resistance)
@@ -256,9 +261,12 @@ def run_cycle_v2():
         old_thesis = thesis
         if needs_analyst:
             trigger_reason = trigger_details
+            # Connection 7: inject recent lessons into analyst prompt
+            lessons_text = get_lessons_for_analyst(since_hours=24, max_lessons=5)
             thesis = run_analyst(
                 thesis, news_feed, market_data,
                 regime=regime, trigger_reason=trigger_reason,
+                lessons_text=lessons_text,
             )
             _last_analyst_call = now
 
@@ -295,17 +303,82 @@ def run_cycle_v2():
         )
         max_shares = apply_gap_risk_reduction(max_shares, config)
 
+        # 11b. Load statistical constraints and apply to position sizing (Connection 4)
+        constraints = load_constraints()
+
+        # 11c. Derive time_of_day_session from current ET time
+        et_now = now_et()
+        et_hour = et_now.hour + et_now.minute / 60
+        if et_hour < 10.5:
+            time_session = "OPENING_HOUR"
+        elif et_hour < 12.0:
+            time_session = "MORNING"
+        elif et_hour < 14.5:
+            time_session = "MIDDAY"
+        else:
+            time_session = "POWER_HOUR"
+
+        # 11d. Determine primary trigger and news catalyst
+        primary_trigger = trigger_names[0] if trigger_names else "unknown"
+        news_catalyst = ""
+        if news_feed and news_feed.items:
+            top_item = max(news_feed.items, key=lambda i: i.relevance, default=None)
+            if top_item:
+                news_catalyst = getattr(top_item, "catalyst_type", "") or ""
+
+        # Build trade_context for this cycle (Connection 1: context → transaction)
+        trade_context = {
+            "regime_trend": regime.get("trend", "unknown"),
+            "regime_volatility": regime.get("volatility", "unknown"),
+            "thesis_direction": thesis.direction,
+            "thesis_conviction": thesis.conviction,
+            "thesis_version": thesis.version,
+            "trigger_type": primary_trigger,
+            "time_of_day_session": time_session,
+            "news_catalyst_category": news_catalyst,
+            "vix_at_entry": round(vix, 2),
+        }
+
+        # Apply statistical constraints (Connection 4: constraints → position sizing)
+        if constraints and max_shares > 0:
+            max_shares, constraints_applied = apply_statistical_constraints(
+                max_shares, trade_context, constraints,
+            )
+            if constraints_applied:
+                trade_context["constraints_applied"] = constraints_applied
+        else:
+            constraints_applied = []
+
         # 12. Get knowledge context
         knowledge = get_relevant_knowledge(market_data)
+
+        # 12b. Load trade stats and format for trader prompt (Connection 6)
+        stats = load_trade_stats()
+        stats_summary = ""
+        if stats and stats.get("overall", {}).get("total", 0) > 0:
+            stats_summary = format_stats_for_prompt(stats, constraints)
+
+        # 12c. Connection 8: prediction accuracy → trader context
+        pred_accuracy = get_prediction_accuracy()
+        if pred_accuracy.get("scored_predictions", 0) > 0:
+            acc_lines = []
+            for horizon, data in pred_accuracy.get("direction_accuracy", {}).items():
+                acc_lines.append(f"{horizon}: {data['accuracy_pct']}% ({data['total']} predictions)")
+            if acc_lines:
+                accuracy_text = "Your prediction accuracy: " + ", ".join(acc_lines)
+                if stats_summary:
+                    stats_summary += f"\n\n{accuracy_text}"
+                else:
+                    stats_summary = accuracy_text
 
         # 13. Compute hold streak
         hold_streak = _get_hold_streak_context()
 
-        # 14. Run Trader phase
+        # 14. Run Trader phase (Connection 6: stats → trader prompt)
         decision = run_trader(
             thesis, market_data, signals, aggregate, portfolio,
             knowledge=knowledge, macro_gate=macro_gate, regime=regime,
-            hold_streak=hold_streak,
+            hold_streak=hold_streak, stats_summary=stats_summary,
         )
         action = decision.get("action", "HOLD")
         shares = decision.get("shares", 0)
@@ -327,21 +400,31 @@ def run_cycle_v2():
             action = "HOLD"
             _log_hold_decision(decision, market_data, signals, "earnings_blackout")
 
-        # 17. Cap shares by ATR-sized max
+        # 17. Cap shares by ATR-sized max (already constraint-adjusted)
         if action == "BUY" and shares > max_shares:
             logger.info(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f} shares")
             shares = max_shares
 
-        # 18. Execute or log HOLD
+        # 18. Execute or log HOLD (Connection 1+5: trade_context + constraints → transaction)
         if action in ("BUY", "SELL") and shares > 0:
             decision["_vix"] = vix
             decision["_regime"] = regime
             decision["_triggers"] = trigger_names
-            result = execute_trade(action, shares, current_price, decision)
+            # Populate signals from strategy outputs (Connection 5b)
+            if not decision.get("signals"):
+                decision["signals"] = {
+                    s.strategy: {"action": s.action, "confidence": s.confidence}
+                    for s in signals
+                }
+            result = execute_trade(
+                action, shares, current_price, decision,
+                trade_context=trade_context,
+            )
             if result["status"] == "executed":
                 txn = result["transaction"]
+                constraint_tag = f" [{len(constraints_applied)} constraints]" if constraints_applied else ""
                 logger.info(
-                    f"EXECUTED: {action} {shares:.4f} @ ${txn['price']:.2f} "
+                    f"EXECUTED: {action} {shares:.4f} @ ${txn['price']:.2f}{constraint_tag} "
                     f"| Cash: {format_currency(result['portfolio']['cash'])} "
                     f"| Value: {format_currency(result['portfolio']['total_value'])}"
                 )
@@ -930,6 +1013,34 @@ async def run_daily_research():
 
         # 1. Run full learning cycle
         await run_learning_cycle(current_price, portfolio)
+
+        # 1b. Connection 9: Recompute trade stats and constraints after learning cycle
+        try:
+            stats = compute_and_save_trade_stats()
+            constraints = generate_and_save_constraints()
+            logger.info(
+                f"Nightly stats refresh: {stats['overall'].get('total', 0)} trades analyzed, "
+                f"{len(constraints)} constraints active"
+            )
+        except Exception as e:
+            logger.warning(f"Nightly stats refresh failed: {e}")
+
+        # 1c. Connection 5c: Check prediction accuracy trend and log alert
+        try:
+            pred_acc = get_prediction_accuracy()
+            # Check rolling accuracy on scored predictions
+            for horizon in ("30min", "2hr", "1day"):
+                h_data = pred_acc.get("direction_accuracy", {}).get(horizon, {})
+                if h_data.get("total", 0) >= 10:
+                    acc = h_data.get("accuracy_pct", 50)
+                    if acc < 40:
+                        logger.warning(
+                            f"PREDICTION ACCURACY ALERT: {horizon} accuracy at {acc}% "
+                            f"(last {h_data['total']} predictions). "
+                            f"Agent may be systematically overconfident."
+                        )
+        except Exception as e:
+            logger.debug(f"Prediction accuracy check failed: {e}")
 
         # 2. Run research tasks
         logger.info("Running research tasks...")

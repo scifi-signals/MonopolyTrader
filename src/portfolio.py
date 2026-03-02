@@ -139,8 +139,12 @@ def validate_trade(action: str, shares: float, price: float, portfolio: dict, co
     return True, "OK"
 
 
-def execute_trade(action: str, shares: float, price: float, decision: dict = None) -> dict:
-    """Execute a simulated trade. Returns the transaction record."""
+def execute_trade(action: str, shares: float, price: float, decision: dict = None, trade_context: dict = None) -> dict:
+    """Execute a simulated trade. Returns the transaction record.
+
+    trade_context: optional dict with regime, thesis, trigger, and timing info
+    that gets merged into the transaction record for statistical analysis.
+    """
     config = load_config()
     ticker = config["ticker"]
     portfolio = load_portfolio()
@@ -230,6 +234,18 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         "streak_breaker": decision.get("_streak_breaker") if decision else None,
         "review": None,
     }
+
+    # Merge trade_context for statistical analysis (regime, thesis, trigger, timing)
+    if trade_context:
+        txn["trade_context"] = trade_context
+    else:
+        txn["trade_context"] = {}
+
+    # Also ensure constraints_applied is captured if passed via trade_context
+    if trade_context and "constraints_applied" in trade_context:
+        txn["constraints_applied"] = trade_context["constraints_applied"]
+    else:
+        txn["constraints_applied"] = []
 
     transactions.append(txn)
     save_transactions(transactions)

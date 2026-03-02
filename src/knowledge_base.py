@@ -500,6 +500,56 @@ def _compute_strategy_accuracy(predictions: list) -> dict:
     return result
 
 
+def get_lessons_for_analyst(since_hours: int = 24, max_lessons: int = 5) -> str:
+    """Get recent validated lessons for injection into the analyst prompt.
+
+    Returns lessons created or validated since the last thesis update,
+    formatted as a text block. This ensures the analyst considers recent
+    learnings when updating the thesis (Connection 7).
+    """
+    from datetime import datetime, timezone, timedelta
+
+    lessons = get_lessons()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=since_hours)
+
+    # Filter: recent, active, and preferably validated
+    recent = []
+    for lesson in lessons:
+        if lesson.get("archived") or lesson.get("disabled"):
+            continue
+        ts = lesson.get("timestamp")
+        if not ts:
+            continue
+        try:
+            created = datetime.fromisoformat(ts)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created >= cutoff:
+                recent.append(lesson)
+        except (ValueError, TypeError):
+            continue
+
+    if not recent:
+        return ""
+
+    # Sort by weight (most trusted first), then take top N
+    recent.sort(key=lambda l: l.get("weight", 0.5), reverse=True)
+    top = recent[:max_lessons]
+
+    lines = []
+    for lesson in top:
+        lid = lesson.get("id", "?")
+        category = lesson.get("category", "unknown")
+        text = lesson.get("lesson", lesson.get("initial_explanation", ""))
+        validated = lesson.get("skeptic_review", {}).get("validated", False)
+        weight = lesson.get("weight", 1.0)
+        tag = "[validated]" if validated else "[unvalidated]"
+        lines.append(f"[{lid}] {tag} ({category}, weight={weight:.2f}): {text[:200]}")
+
+    return "\n".join(lines)
+
+
 def get_relevant_research() -> str:
     """Retrieve latest findings from all research topics for the Analyst prompt.
 

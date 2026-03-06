@@ -435,3 +435,179 @@ def _build_scoreboard(predictions: list) -> list:
         entry["score"] = f"{correct}/{total}" if total > 0 else "pending"
         scoreboard.append(entry)
     return scoreboard
+
+
+def generate_daily_report() -> str:
+    """Generate a daily owner report summarizing the day's trading activity.
+
+    Returns a formatted text report and saves it to data/daily_reports/.
+    """
+    from datetime import datetime, timezone, timedelta
+    import numpy as np
+
+    config = load_config()
+    ticker = config["ticker"]
+    summary = get_portfolio_summary()
+    transactions = load_transactions()
+
+    # Today's date
+    today = now_et().strftime("%Y-%m-%d")
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0)
+
+    # Today's trades
+    todays_trades = []
+    for t in transactions:
+        try:
+            ts = datetime.fromisoformat(t["timestamp"])
+            if ts >= today_start:
+                todays_trades.append(t)
+        except (ValueError, TypeError):
+            continue
+
+    # Today's realized P&L
+    today_pnl = sum(t.get("realized_pnl", 0) or 0 for t in todays_trades if t["action"] == "SELL")
+    today_buys = [t for t in todays_trades if t["action"] == "BUY"]
+    today_sells = [t for t in todays_trades if t["action"] == "SELL"]
+
+    # Strategy scores
+    scores = get_strategy_scores()
+    strategies = scores.get("strategies", {})
+
+    # Prediction accuracy
+    pred_acc = get_prediction_accuracy()
+
+    # Current thesis
+    from .thesis import load_thesis
+    thesis = load_thesis()
+
+    # Regime from latest cycle
+    latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default={})
+    regime = latest_cycle.get("regime", {})
+
+    # Snapshots for drawdown
+    snapshot_files = sorted(SNAPSHOTS_DIR.glob("*.json"))
+    max_drawdown = 0.0
+    peak_value = config["starting_balance"]
+    if snapshot_files:
+        values = []
+        for sf in snapshot_files:
+            snap = load_json(sf, default={})
+            values.append(snap.get("total_value", 1000))
+        if values:
+            vals = np.array(values, dtype=float)
+            peak = np.maximum.accumulate(vals)
+            drawdowns = (peak - vals) / peak
+            max_drawdown = float(np.max(drawdowns) * 100)
+            peak_value = float(np.max(vals))
+
+    # Build report
+    lines = [
+        f"{'='*60}",
+        f"MONOPOLYTRADER DAILY REPORT — {today}",
+        f"{'='*60}",
+        "",
+        f"Portfolio Value:  {format_currency(summary['total_value'])}",
+        f"Total P&L:       {format_currency(summary['total_pnl'])} ({summary['total_pnl_pct']:+.2f}%)",
+        f"Cash:            {format_currency(summary['cash'])}",
+        f"Peak Value:      {format_currency(peak_value)}",
+        f"Max Drawdown:    {max_drawdown:.1f}%",
+        "",
+        f"--- Today's Activity ---",
+        f"Trades: {len(todays_trades)} ({len(today_buys)} buys, {len(today_sells)} sells)",
+        f"Realized P&L:    {format_currency(today_pnl)}" if today_pnl != 0 else "Realized P&L:    $0.00",
+    ]
+
+    for t in todays_trades:
+        pnl_str = f" P&L={format_currency(t.get('realized_pnl', 0))}" if t["action"] == "SELL" else ""
+        lines.append(
+            f"  {t['action']} {t['shares']:.4f} @ ${t['price']:.2f} "
+            f"({t.get('strategy', '?')}, conf={t.get('confidence', 0):.2f}){pnl_str}"
+        )
+
+    if not todays_trades:
+        lines.append("  No trades today.")
+
+    # Holdings
+    holdings = summary.get("holdings", {})
+    h = holdings.get(ticker, {})
+    if h.get("shares", 0) > 0:
+        lines.extend([
+            "",
+            f"--- Position ---",
+            f"{ticker}: {h['shares']:.4f} shares @ ${h['avg_cost_basis']:.2f} avg",
+            f"Unrealized P&L: {format_currency(h.get('unrealized_pnl', 0))}",
+        ])
+    else:
+        lines.extend(["", "--- Position ---", "All cash (no position)."])
+
+    # Thesis
+    if thesis and thesis.narrative:
+        lines.extend([
+            "",
+            f"--- Thesis (v{thesis.version}) ---",
+            f"Direction: {thesis.direction} (conviction {thesis.conviction:.2f})",
+            f"Narrative: {thesis.narrative[:120]}...",
+        ])
+
+    # Regime
+    if regime:
+        lines.extend([
+            "",
+            f"--- Regime ---",
+            f"Trend: {regime.get('trend', '?')} | Volatility: {regime.get('volatility', '?')} | VIX: {regime.get('vix', '?')}",
+        ])
+
+    # Strategy weights
+    if strategies:
+        lines.extend(["", "--- Strategy Weights ---"])
+        for name, data in sorted(strategies.items(), key=lambda x: x[1].get("weight", 0), reverse=True):
+            w = data.get("weight", 0)
+            wr = data.get("win_rate", 0)
+            lines.append(f"  {name:20s} weight={w:.2f}  win_rate={wr:.0f}%")
+
+    # Cumulative stats
+    lines.extend([
+        "",
+        f"--- Cumulative ---",
+        f"Total Trades:    {summary['total_trades']}",
+        f"Win Rate:        {summary['win_rate']}%",
+        f"Trading Days:    {len(snapshot_files)}",
+    ])
+
+    # Prediction accuracy
+    dir_acc = pred_acc.get("direction_accuracy", {})
+    if dir_acc:
+        lines.append("")
+        lines.append("--- Prediction Accuracy ---")
+        for horizon, data in dir_acc.items():
+            if data.get("total", 0) > 0:
+                lines.append(f"  {horizon}: {data['accuracy_pct']}% ({data['total']} predictions)")
+
+    lines.extend(["", f"{'='*60}"])
+
+    report = "\n".join(lines)
+
+    # Save to file
+    report_dir = DATA_DIR / "daily_reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"{today}.txt"
+    report_path.write_text(report)
+
+    # Also save as JSON for dashboard
+    report_json = {
+        "date": today,
+        "portfolio_value": summary["total_value"],
+        "total_pnl": summary["total_pnl"],
+        "total_pnl_pct": summary["total_pnl_pct"],
+        "today_trades": len(todays_trades),
+        "today_pnl": round(today_pnl, 2),
+        "max_drawdown_pct": round(max_drawdown, 1),
+        "win_rate": summary["win_rate"],
+        "trading_days": len(snapshot_files),
+        "thesis_direction": thesis.direction if thesis else "unknown",
+        "thesis_conviction": thesis.conviction if thesis else 0,
+    }
+    save_json(report_dir / f"{today}.json", report_json)
+
+    logger.info(f"Daily report saved: {report_path}")
+    return report

@@ -20,6 +20,7 @@ from .market_data import (
 from .portfolio import (
     load_portfolio, execute_trade, save_portfolio, save_snapshot,
     check_stop_losses, check_daily_loss_limit, check_cooldown,
+    check_end_of_day_close,
     update_market_price, get_portfolio_summary, calculate_position_size,
     apply_gap_risk_reduction,
 )
@@ -212,6 +213,22 @@ def run_cycle_v2():
                 logger.info(f"Stop loss executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
             return
 
+        # 3b. Check end-of-day position close (3:50 PM ET)
+        eod_signal = check_end_of_day_close(ticker, config)
+        if eod_signal:
+            result = execute_trade(
+                "SELL", eod_signal["shares"], current_price,
+                {"strategy": "eod_close", "confidence": 1.0,
+                 "hypothesis": eod_signal["reason"],
+                 "reasoning": "Automatic end-of-day position close to avoid overnight gap risk",
+                 "_vix": vix}
+            )
+            if result["status"] == "executed":
+                logger.info(f"EOD close executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
+                _log_hold_streak_reset(market_data)
+            _post_cycle_tasks(current_price, market_data, regime)
+            return
+
         # 4. Evaluate triggers
         thesis = load_thesis()
         if not thesis.narrative:
@@ -248,8 +265,8 @@ def run_cycle_v2():
         # 6. Check earnings blackout
         earnings_blocked = _check_earnings_blackout(ticker, config)
 
-        # 7. Check cooldown
-        cooldown_ok = check_cooldown(ticker)
+        # 7. Check cooldown (ATR-scaled)
+        cooldown_ok = check_cooldown(ticker, atr=atr, current_price=current_price)
 
         # 8. Run Analyst phase (update thesis)
         now = datetime.now(timezone.utc)
@@ -540,8 +557,22 @@ def run_cycle():
                 logger.info(f"Stop loss executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
             return
 
-        # 6. Check cooldown
-        if not check_cooldown(ticker):
+        # 5b. Check end-of-day position close (3:50 PM ET)
+        eod_signal = check_end_of_day_close(ticker, config)
+        if eod_signal:
+            result = execute_trade(
+                "SELL", eod_signal["shares"], current_price,
+                {"strategy": "eod_close", "confidence": 1.0,
+                 "hypothesis": eod_signal["reason"],
+                 "reasoning": "Automatic end-of-day position close to avoid overnight gap risk",
+                 "_vix": vix}
+            )
+            if result["status"] == "executed":
+                logger.info(f"EOD close executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
+            return
+
+        # 6. Check cooldown (ATR-scaled)
+        if not check_cooldown(ticker, atr=atr, current_price=current_price):
             logger.info("Cooldown active — skipping decision")
             return
 
@@ -1113,10 +1144,17 @@ async def run_daily_research():
         save_snapshot()
 
         # 8. Generate dashboard (full=True for daily benchmark recalculation)
-        from .reporter import generate_dashboard_data
+        from .reporter import generate_dashboard_data, generate_daily_report
         generate_dashboard_data(full=True)
 
-        # 9. Summary
+        # 9. Generate daily owner report
+        try:
+            report = generate_daily_report()
+            logger.info(f"Daily owner report:\n{report}")
+        except Exception as e:
+            logger.warning(f"Daily report generation failed: {e}")
+
+        # 10. Summary
         summary = get_portfolio_summary()
         logger.info(
             f"Daily summary: Value={format_currency(summary['total_value'])} "

@@ -435,12 +435,28 @@ def check_daily_loss_limit() -> bool:
     return False
 
 
-def check_cooldown(ticker: str) -> bool:
-    """Returns True if cooldown period has passed since last trade on this ticker."""
-    config = load_config()
-    cooldown = config["risk_params"]["cooldown_minutes"]
-    transactions = load_transactions()
+def check_cooldown(ticker: str, atr: float = None, current_price: float = None) -> bool:
+    """Returns True if cooldown period has passed since last trade on this ticker.
 
+    When ATR and current_price are provided, scales the cooldown dynamically:
+    - Low volatility (ATR < 1% of price): base cooldown (15 min)
+    - Normal volatility (1-2%): 1.5x cooldown
+    - High volatility (> 2%): 2x cooldown
+    This prevents whipsaw trades in volatile conditions.
+    """
+    config = load_config()
+    base_cooldown = config["risk_params"]["cooldown_minutes"]
+
+    # Scale cooldown by ATR volatility
+    cooldown = base_cooldown
+    if atr and current_price and current_price > 0:
+        atr_pct = atr / current_price
+        if atr_pct >= 0.02:
+            cooldown = base_cooldown * 2.0
+        elif atr_pct >= 0.01:
+            cooldown = base_cooldown * 1.5
+
+    transactions = load_transactions()
     ticker_trades = [t for t in transactions if t["ticker"] == ticker]
     if not ticker_trades:
         return True  # No trades yet, no cooldown
@@ -449,7 +465,49 @@ def check_cooldown(ticker: str) -> bool:
     now = datetime.now(timezone.utc)
     minutes_since = (now - last_trade_time).total_seconds() / 60
 
+    if minutes_since < cooldown:
+        logger.info(f"Cooldown: {minutes_since:.0f}m < {cooldown:.0f}m (ATR-scaled)")
     return minutes_since >= cooldown
+
+
+def check_end_of_day_close(ticker: str, config: dict = None) -> dict | None:
+    """Check if we should close positions before market close.
+
+    Sells all holdings at 3:50 PM ET to avoid overnight gap risk.
+    Returns a sell signal dict if positions should be closed, None otherwise.
+    """
+    if config is None:
+        config = load_config()
+
+    from .utils import now_et
+    et = now_et()
+
+    # Only trigger at 3:50 PM ET or later (10 min before close)
+    close_h, close_m = map(int, config["market_hours"]["close"].split(":"))
+    close_minutes = close_h * 60 + close_m  # 960 for 16:00
+    current_minutes = et.hour * 60 + et.minute
+    eod_trigger = close_minutes - 10  # 950 = 15:50
+
+    if current_minutes < eod_trigger:
+        return None
+
+    portfolio = load_portfolio()
+    h = portfolio["holdings"].get(ticker, {})
+    shares = h.get("shares", 0)
+
+    if shares <= 0:
+        return None
+
+    logger.warning(
+        f"END-OF-DAY CLOSE: Selling {shares:.4f} {ticker} at {et.strftime('%H:%M')} ET "
+        f"(market closes at {config['market_hours']['close']})"
+    )
+    return {
+        "action": "SELL",
+        "shares": shares,
+        "reason": f"End-of-day position close at {et.strftime('%H:%M')} ET",
+        "strategy": "eod_close",
+    }
 
 
 def get_portfolio_summary() -> dict:

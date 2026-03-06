@@ -165,16 +165,89 @@ def technical_signals_signal(indicators: dict, weight: float) -> StrategySignal:
     return _hold(name, reasoning, weight, sigs)
 
 
+def range_trader_signal(indicators: dict, regime: dict, weight: float) -> StrategySignal:
+    """Range-bound mean reversion optimized for TSLA's sideways volatility.
+
+    Active when regime.directional == "range_bound". Uses wider Bollinger
+    thresholds than mean_reversion and incorporates ADX to confirm range.
+    This is the primary strategy for exploiting TSLA's bounce-around behavior.
+    """
+    name = "range_trader"
+    directional = regime.get("directional", "range_bound")
+
+    # Only active in range-bound regime
+    if directional == "trending":
+        return _hold(name, "Regime is trending — range trader inactive", weight)
+
+    price = indicators.get("current_price")
+    bb_upper = indicators.get("bollinger_upper")
+    bb_lower = indicators.get("bollinger_lower")
+    bb_mid = indicators.get("bollinger_mid")
+    rsi = indicators.get("rsi_14")
+    adx = indicators.get("adx")
+
+    if any(v is None for v in [price, bb_upper, bb_lower, bb_mid, rsi]):
+        return _hold(name, "Insufficient indicator data", weight)
+
+    sigs = {
+        "price": price, "bb_upper": bb_upper, "bb_lower": bb_lower,
+        "bb_mid": bb_mid, "rsi_14": rsi, "adx": adx,
+        "regime_directional": directional,
+    }
+
+    # ADX confirmation bonus: lower ADX = stronger range signal
+    adx_bonus = 0.0
+    if adx is not None and adx < 20:
+        adx_bonus = 0.1  # Strong range-bound confirmation
+
+    # BUY zone: lower third of Bollinger band + RSI < 40
+    bb_range = bb_upper - bb_lower
+    if bb_range > 0:
+        position_in_band = (price - bb_lower) / bb_range  # 0 = lower, 1 = upper
+
+        if position_in_band <= 0.15 and rsi < 38:
+            # Strong buy: at the bottom of the range
+            conf = 0.65 + adx_bonus + min((38 - rsi) / 50, 0.15)
+            conf = round(min(conf, 0.90), 2)
+            return StrategySignal("BUY", conf, weight, name,
+                f"Range BUY: price ${price:.2f} at bottom of BB range ({position_in_band:.0%}), RSI {rsi:.1f}, ADX {adx or 'N/A'}", sigs)
+
+        if position_in_band <= 0.30 and rsi < 43:
+            # Moderate buy: lower third
+            conf = 0.45 + adx_bonus
+            return StrategySignal("BUY", round(conf, 2), weight, name,
+                f"Range BUY: price ${price:.2f} in lower third ({position_in_band:.0%}), RSI {rsi:.1f}", sigs)
+
+        # SELL zone: upper portion of Bollinger band
+        # Note: daily RSI rarely exceeds 55 in a range-bound TSLA market,
+        # so thresholds are calibrated for daily bars (not intraday)
+        if position_in_band >= 0.80 and rsi > 55:
+            conf = 0.65 + adx_bonus + min((rsi - 55) / 50, 0.15)
+            conf = round(min(conf, 0.90), 2)
+            return StrategySignal("SELL", conf, weight, name,
+                f"Range SELL: price ${price:.2f} at top of BB range ({position_in_band:.0%}), RSI {rsi:.1f}, ADX {adx or 'N/A'}", sigs)
+
+        if position_in_band >= 0.50 and rsi > 46:
+            # Moderate sell: upper half with RSI above midline
+            conf = 0.40 + adx_bonus
+            return StrategySignal("SELL", round(conf, 2), weight, name,
+                f"Range SELL: price ${price:.2f} in upper half ({position_in_band:.0%}), RSI {rsi:.1f}", sigs)
+
+    bb_pos_str = f"{position_in_band:.0%}" if bb_range > 0 else "N/A"
+    return _hold(name, f"Price ${price:.2f} in mid-range ({bb_pos_str} of BB), RSI {rsi:.1f} — waiting for extremes", weight, sigs)
+
+
 def thesis_alignment_signal(
     indicators: dict,
     thesis_direction: str,
     thesis_conviction: float,
     weight: float,
 ) -> StrategySignal:
-    """Generate signal based on thesis direction + technical confirmation.
+    """Generate signal informed by thesis direction + technical confirmation.
 
-    The thesis (from the Analyst) determines direction.
-    Technicals provide timing confirmation. This replaces both DCA and sentiment.
+    v3: Thesis informs SIZE, not direction blocking. Counter-thesis trades
+    are allowed at reduced confidence when technicals are strong. This prevents
+    the thesis from permanently blocking profitable setups.
     """
     name = "thesis_alignment"
     price = indicators.get("current_price")
@@ -198,69 +271,74 @@ def thesis_alignment_signal(
     if thesis_conviction < 0.3:
         return _hold(name, f"Thesis {thesis_direction} but conviction too low ({thesis_conviction:.2f})", weight, sigs)
 
-    # BULLISH thesis: look for technical buy confirmation
-    if thesis_direction == "bullish":
-        tech_confirms = 0
-        reasons = [f"Thesis bullish (conviction={thesis_conviction:.2f})"]
+    # Count buy and sell technical confirmations
+    buy_confirms = 0
+    sell_confirms = 0
+    reasons = [f"Thesis {thesis_direction} (conviction={thesis_conviction:.2f})"]
 
-        # RSI oversold = good entry
-        if rsi is not None and rsi < 40:
-            tech_confirms += 1
+    if rsi is not None:
+        if rsi < 35:
+            buy_confirms += 1
             reasons.append(f"RSI oversold at {rsi:.1f}")
-        # Price near/above SMA20 = trend intact
-        if sma20 is not None and price >= sma20 * 0.99:
-            tech_confirms += 1
-            reasons.append(f"Price ${price:.2f} at/above SMA20 ${sma20:.2f}")
-        # MACD bullish crossover
-        if macd_cross == "bullish_crossover":
-            tech_confirms += 1
-            reasons.append("Bullish MACD crossover")
-
-        if tech_confirms >= 1:
-            # Confidence = thesis conviction * technical confirmation factor
-            conf = thesis_conviction * (0.5 + tech_confirms * 0.15)
-            conf = round(min(conf, 0.95), 2)
-            return StrategySignal("BUY", conf, weight, name,
-                f"Thesis-aligned BUY: {'; '.join(reasons)}", sigs)
-
-        # Thesis bullish but no technical confirmation yet
-        if thesis_conviction >= 0.6:
-            return StrategySignal("BUY", round(thesis_conviction * 0.4, 2), weight, name,
-                f"Thesis bullish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
-
-        return _hold(name, f"Thesis bullish but waiting for technical entry: {'; '.join(reasons)}", weight, sigs)
-
-    # BEARISH thesis: look for technical sell confirmation
-    if thesis_direction == "bearish":
-        tech_confirms = 0
-        reasons = [f"Thesis bearish (conviction={thesis_conviction:.2f})"]
-
-        # RSI overbought = good sell point
-        if rsi is not None and rsi > 65:
-            tech_confirms += 1
+        elif rsi > 65:
+            sell_confirms += 1
             reasons.append(f"RSI overbought at {rsi:.1f}")
-        # Price below SMA20 = trend confirming
-        if sma20 is not None and price < sma20:
-            tech_confirms += 1
+
+    if sma20 is not None:
+        if price >= sma20 * 0.99:
+            buy_confirms += 1
+            reasons.append(f"Price ${price:.2f} at/above SMA20 ${sma20:.2f}")
+        elif price < sma20:
+            sell_confirms += 1
             reasons.append(f"Price ${price:.2f} below SMA20 ${sma20:.2f}")
-        # MACD bearish crossover
-        if macd_cross == "bearish_crossover":
-            tech_confirms += 1
-            reasons.append("Bearish MACD crossover")
 
-        if tech_confirms >= 1:
-            conf = thesis_conviction * (0.5 + tech_confirms * 0.15)
-            conf = round(min(conf, 0.95), 2)
-            return StrategySignal("SELL", conf, weight, name,
-                f"Thesis-aligned SELL: {'; '.join(reasons)}", sigs)
+    if macd_cross == "bullish_crossover":
+        buy_confirms += 1
+        reasons.append("Bullish MACD crossover")
+    elif macd_cross == "bearish_crossover":
+        sell_confirms += 1
+        reasons.append("Bearish MACD crossover")
 
-        if thesis_conviction >= 0.6:
-            return StrategySignal("SELL", round(thesis_conviction * 0.4, 2), weight, name,
-                f"Thesis bearish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
+    # THESIS-ALIGNED trade: full confidence
+    if thesis_direction == "bullish" and buy_confirms >= 1:
+        conf = thesis_conviction * (0.5 + buy_confirms * 0.15)
+        conf = round(min(conf, 0.95), 2)
+        return StrategySignal("BUY", conf, weight, name,
+            f"Thesis-aligned BUY: {'; '.join(reasons)}", sigs)
 
-        return _hold(name, f"Thesis bearish but waiting for technical confirmation: {'; '.join(reasons)}", weight, sigs)
+    if thesis_direction == "bearish" and sell_confirms >= 1:
+        conf = thesis_conviction * (0.5 + sell_confirms * 0.15)
+        conf = round(min(conf, 0.95), 2)
+        return StrategySignal("SELL", conf, weight, name,
+            f"Thesis-aligned SELL: {'; '.join(reasons)}", sigs)
 
-    return _hold(name, f"Unknown thesis direction: {thesis_direction}", weight, sigs)
+    # COUNTER-THESIS trade: allowed but at reduced confidence (thesis sizes it down)
+    # Only when technicals are strong (2+ confirmations against thesis)
+    if thesis_direction == "bearish" and buy_confirms >= 2:
+        # Technicals strongly bullish despite bearish thesis — allow at reduced conf
+        counter_conf = (1.0 - thesis_conviction) * (0.3 + buy_confirms * 0.15)
+        counter_conf = round(min(counter_conf, 0.50), 2)  # Cap at 0.50 for counter-thesis
+        if counter_conf >= 0.15:
+            return StrategySignal("BUY", counter_conf, weight, name,
+                f"Counter-thesis BUY (thesis bearish but technicals strong): {'; '.join(reasons)}", sigs)
+
+    if thesis_direction == "bullish" and sell_confirms >= 2:
+        counter_conf = (1.0 - thesis_conviction) * (0.3 + sell_confirms * 0.15)
+        counter_conf = round(min(counter_conf, 0.50), 2)
+        if counter_conf >= 0.15:
+            return StrategySignal("SELL", counter_conf, weight, name,
+                f"Counter-thesis SELL (thesis bullish but technicals strong): {'; '.join(reasons)}", sigs)
+
+    # Thesis-aligned but no technical confirmation yet
+    if thesis_direction == "bullish" and thesis_conviction >= 0.6:
+        return StrategySignal("BUY", round(thesis_conviction * 0.35, 2), weight, name,
+            f"Thesis bullish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
+
+    if thesis_direction == "bearish" and thesis_conviction >= 0.6:
+        return StrategySignal("SELL", round(thesis_conviction * 0.35, 2), weight, name,
+            f"Thesis bearish high conviction but no tech confirmation: {'; '.join(reasons)}", sigs)
+
+    return _hold(name, f"Thesis {thesis_direction} but waiting for technical confirmation: {'; '.join(reasons)}", weight, sigs)
 
 
 # --- Legacy strategy functions kept for replay/ensemble backward compatibility ---
@@ -280,46 +358,51 @@ def sentiment_signal(news_sentiment: float | None, weight: float) -> StrategySig
 def _apply_regime_adjustment(signal: StrategySignal, regime: dict) -> StrategySignal:
     """Adjust strategy confidence based on current market regime.
 
-    - Momentum gets boosted in bull/low-vol, penalized in bear/high-vol
-    - Mean reversion gets boosted in range-bound/high-vol
-    - Technical signals get penalized in high volatility
-    - DCA is regime-neutral
-    - Sentiment gets boosted when it aligns with regime direction
+    Uses both legacy trend (bull/bear/sideways) and new directional
+    (trending/range_bound) classification for regime-appropriate boosts.
     """
     if not regime or signal.action == "HOLD":
         return signal
 
     trend = regime.get("trend", "sideways")
     vol = regime.get("volatility", "normal")
+    directional = regime.get("directional", "range_bound")
     multiplier = 1.0
 
     if signal.strategy == "momentum":
-        if trend == "bull" and vol == "low":
-            multiplier = 1.2
-        elif trend == "bear":
-            multiplier = 0.7
-        elif vol == "high":
-            multiplier = 0.8
+        if directional == "trending":
+            multiplier = 1.3  # Momentum thrives in trending regimes
+        elif directional == "range_bound":
+            multiplier = 0.6  # Momentum fails in range-bound
+        if vol == "high":
+            multiplier *= 0.85
     elif signal.strategy == "mean_reversion":
-        if trend == "sideways" or vol == "high":
-            multiplier = 1.2
-        elif trend in ("bull", "bear") and vol == "low":
-            multiplier = 0.8
+        if directional == "range_bound":
+            multiplier = 1.3  # Mean reversion thrives in range-bound
+        elif directional == "trending":
+            multiplier = 0.6  # Mean reversion fails in trends
+        if vol == "high":
+            multiplier *= 1.1  # Wide bands = bigger reversion opportunities
+    elif signal.strategy == "range_trader":
+        # Range trader already gates itself on directional regime,
+        # so just give a vol boost
+        if vol == "high":
+            multiplier = 1.15
+        elif vol == "low":
+            multiplier = 0.9  # Narrow ranges = less opportunity
     elif signal.strategy == "technical_signals":
         if vol == "high":
             multiplier = 0.8
     elif signal.strategy == "thesis_alignment":
-        # Thesis alignment gets boosted when thesis direction matches regime
         if signal.action == "BUY" and trend == "bull":
             multiplier = 1.15
         elif signal.action == "SELL" and trend == "bear":
             multiplier = 1.15
         elif signal.action == "BUY" and trend == "bear":
-            multiplier = 0.75  # Buying against bear regime is risky
+            multiplier = 0.75
         elif signal.action == "SELL" and trend == "bull":
             multiplier = 0.80
     elif signal.strategy == "sentiment":
-        # Legacy — boost when sentiment direction aligns with regime
         if signal.action == "BUY" and trend == "bull":
             multiplier = 1.15
         elif signal.action == "SELL" and trend == "bear":
@@ -383,6 +466,11 @@ def evaluate_all_strategies(
             thesis_conviction,
             weights.get("thesis_alignment", 0.25),
         ))
+
+    # Range trader — always enabled, self-gates on regime
+    signals.append(range_trader_signal(
+        indicators, regime, weights.get("range_trader", 0.20),
+    ))
 
     # Legacy strategies — still supported for replay/ensemble backward compat
     if "dca" in enabled:

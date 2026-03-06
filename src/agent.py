@@ -788,9 +788,12 @@ You receive:
 Your job:
 1. What NEWS or CATALYST is driving TSLA right now?
 2. Has the current thesis been confirmed, challenged, or invalidated?
-3. What are the key price levels (support/resistance) and what would break them?
-4. What is the bull case and bear case?
-5. What would invalidate your thesis?
+3. If the thesis is WRONG about price direction, say so explicitly. Don't absorb contradictory evidence into the existing narrative. If an analyst upgrade drives the stock up 5% while your thesis is bearish, the thesis was wrong about the short-term — acknowledge it.
+4. What are the key price levels (support/resistance) and what would break them?
+5. What is the bull case and bear case?
+6. What would invalidate your thesis?
+
+CRITICAL: When a high-impact catalyst contradicts your thesis direction (e.g., major upgrade while bearish, or downgrade while bullish), you MUST reduce conviction significantly. Do NOT maintain high conviction by explaining away the catalyst. The market is telling you something — listen to it.
 
 You do NOT recommend trades. You build the thesis that the Trader module uses.
 
@@ -809,16 +812,17 @@ Respond with JSON:
 }"""
 
 
-TRADER_SYSTEM = """You are the TRADER module of MonopolyTrader v2. You receive a thesis about WHY TSLA is moving and use technical indicators to decide WHEN to act.
+TRADER_SYSTEM = """You are the TRADER module of MonopolyTrader v3 (swing trader). You receive a thesis about WHY TSLA is moving and use technical indicators to decide WHEN and HOW MUCH to act.
 
-The thesis determines DIRECTION. Technicals determine TIMING and ENTRY.
+The thesis determines POSITION SIZE. Technicals determine DIRECTION and TIMING.
 
 Rules:
-- If thesis is bearish, do NOT buy. Look for sell signals or hold.
-- If thesis is bullish, look for technical confirmation to buy (dip to support, RSI oversold, MACD crossover).
-- If thesis is neutral, only act on strong technical signals.
-- The thesis conviction weights your confidence. High thesis conviction + technical confirmation = high-confidence trade.
-- Low thesis conviction = smaller positions or HOLD.
+- Thesis-aligned trades get FULL position size (thesis + technicals agree).
+- Counter-thesis trades are ALLOWED at REDUCED size when technicals are strong. TSLA is volatile — a bearish thesis doesn't mean the stock can't bounce 5% intraday.
+- If thesis is neutral, trade on strong technical signals alone.
+- The thesis conviction weights your confidence. High conviction = larger thesis-aligned positions. Low conviction = thesis has less influence.
+- In RANGE-BOUND regime (low ADX), prioritize mean reversion and range_trader signals over thesis direction.
+- In TRENDING regime (high ADX), prioritize momentum and thesis-aligned signals.
 
 RISK RULES (v3):
 - Max position: 65% of portfolio value
@@ -864,6 +868,81 @@ def _strip_code_fences(raw: str) -> str:
         if raw.endswith("```"):
             raw = raw[:-3]
     return raw.strip()
+
+
+def _apply_catalyst_override(thesis: Thesis, news_feed: NewsFeed) -> Thesis:
+    """Mechanically reduce thesis conviction when high-impact news contradicts direction.
+
+    This is a guard against LLM narrativization — the analyst tends to absorb
+    contradictory evidence into the existing thesis rather than updating it.
+
+    Rules:
+    - If thesis is bearish and high-impact bullish catalyst (upgrade, beat, product launch):
+      cap conviction at 0.50 and log the override
+    - If thesis is bullish and high-impact bearish catalyst (downgrade, miss, regulatory):
+      cap conviction at 0.50 and log the override
+    - Does NOT flip direction — just reduces conviction so other strategies can act
+    """
+    if not news_feed or not news_feed.items:
+        return thesis
+
+    # Check high-impact items for directional catalyst types
+    bullish_catalysts = {"upgrade", "beat", "product", "partnership", "buy_rating"}
+    bearish_catalysts = {"downgrade", "miss", "regulatory", "recall", "sell_rating"}
+
+    has_bullish_catalyst = False
+    has_bearish_catalyst = False
+    catalyst_details = []
+
+    for item in news_feed.items:
+        if not getattr(item, "is_new", False) or item.relevance < 0.7:
+            continue
+        cat_type = getattr(item, "catalyst_type", "") or ""
+        cat_lower = cat_type.lower()
+        title_lower = (item.title or "").lower()
+
+        # Check by catalyst_type field
+        if cat_lower in ("analyst",) or any(k in title_lower for k in ["upgrade", "buy rating", "reinstates", "price target raised"]):
+            has_bullish_catalyst = True
+            catalyst_details.append(f"BULLISH: {item.title[:60]}")
+        elif any(k in title_lower for k in ["downgrade", "sell rating", "price target cut"]):
+            has_bearish_catalyst = True
+            catalyst_details.append(f"BEARISH: {item.title[:60]}")
+
+        # Also check keywords in title
+        if any(k in title_lower for k in ["beats", "record deliveries", "launches"]):
+            has_bullish_catalyst = True
+            catalyst_details.append(f"BULLISH: {item.title[:60]}")
+        elif any(k in title_lower for k in ["misses", "recall", "investigation", "probe"]):
+            has_bearish_catalyst = True
+            catalyst_details.append(f"BEARISH: {item.title[:60]}")
+
+    # Apply override
+    overridden = False
+    if thesis.direction == "bearish" and has_bullish_catalyst and not has_bearish_catalyst:
+        if thesis.conviction > 0.50:
+            logger.warning(
+                f"CATALYST OVERRIDE: bearish thesis conviction {thesis.conviction:.2f} -> 0.50 "
+                f"due to bullish catalyst: {'; '.join(catalyst_details[:2])}"
+            )
+            thesis.conviction = 0.50
+            overridden = True
+    elif thesis.direction == "bullish" and has_bearish_catalyst and not has_bullish_catalyst:
+        if thesis.conviction > 0.50:
+            logger.warning(
+                f"CATALYST OVERRIDE: bullish thesis conviction {thesis.conviction:.2f} -> 0.50 "
+                f"due to bearish catalyst: {'; '.join(catalyst_details[:2])}"
+            )
+            thesis.conviction = 0.50
+            overridden = True
+
+    if overridden:
+        thesis.narrative = (
+            thesis.narrative + f" [CATALYST OVERRIDE: conviction capped at 0.50 due to "
+            f"contradicting catalyst — {catalyst_details[0][:50]}]"
+        )
+
+    return thesis
 
 
 def run_analyst(
@@ -956,6 +1035,11 @@ If the thesis is still valid, say so and explain why. If it needs updating, expl
             key_catalysts=result.get("key_catalysts", current_thesis.key_catalysts),
             updated_by="analyst",
         )
+
+        # CATALYST OVERRIDE: mechanically reduce conviction when high-impact
+        # news contradicts the thesis direction. Prevents narrativization where
+        # the LLM absorbs contradictory evidence into the existing story.
+        new_thesis = _apply_catalyst_override(new_thesis, news_feed)
 
         # Save with reason
         change_reason = result.get("thesis_change_reason", trigger_reason)

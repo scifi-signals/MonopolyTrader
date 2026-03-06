@@ -130,6 +130,18 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     atr = ta.volatility.AverageTrueRange(high, low, close, window=14)
     indicators["atr"] = _last(atr.average_true_range())
 
+    # ADX (Average Directional Index) — trend strength indicator
+    # Needs at least 2*window rows to compute (14-day ADX needs ~28 bars)
+    if len(df) >= 28:
+        adx_ind = ta.trend.ADXIndicator(high, low, close, window=14)
+        indicators["adx"] = _last(adx_ind.adx())
+        indicators["adx_pos"] = _last(adx_ind.adx_pos())  # +DI
+        indicators["adx_neg"] = _last(adx_ind.adx_neg())  # -DI
+    else:
+        indicators["adx"] = None
+        indicators["adx_pos"] = None
+        indicators["adx_neg"] = None
+
     # Volume SMA
     indicators["volume_sma_20"] = _last(ta.trend.SMAIndicator(volume, window=20).sma_indicator())
 
@@ -170,11 +182,28 @@ def get_macro_data() -> dict:
 
 
 def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> dict:
-    """Classify market regime using 50-day SPY slope + VIX terciles.
+    """Classify market regime using TSLA ADX + SPY slope + VIX.
 
-    Returns: {trend: bull|bear|sideways, volatility: low|normal|high, vix: float}
+    Two-axis classification:
+      - Directional: trending vs range-bound (ADX-based, with hysteresis)
+      - Volatility: low / normal / high (VIX-based)
+
+    Also preserves legacy trend (bull/bear/sideways) for backward compat.
+
+    Returns: {
+        trend: bull|bear|sideways,  # legacy — SPY slope
+        directional: trending|range_bound,  # NEW — ADX-based
+        volatility: low|normal|high,
+        vix: float,
+        adx: float,
+        strategy_mode: str,  # "mean_reversion" or "momentum" — recommended primary
+    }
     """
-    regime = {"trend": "sideways", "volatility": "normal", "vix": 0.0}
+    regime = {
+        "trend": "sideways", "directional": "range_bound",
+        "volatility": "normal", "vix": 0.0, "adx": 0.0,
+        "strategy_mode": "mean_reversion",
+    }
 
     if macro_data is None:
         macro_data = get_macro_data()
@@ -190,7 +219,43 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     else:
         regime["volatility"] = "high"
 
-    # SPY 50-day slope for trend
+    # ADX-based directional classification from TSLA daily data
+    adx_value = None
+    if daily_df is not None and len(daily_df) >= 30:
+        try:
+            adx_ind = ta.trend.ADXIndicator(
+                daily_df["High"], daily_df["Low"], daily_df["Close"], window=14
+            )
+            adx_series = adx_ind.adx().dropna()
+            if len(adx_series) >= 3:
+                adx_value = float(adx_series.iloc[-1])
+                regime["adx"] = round(adx_value, 2)
+
+                # Hysteresis: use 3-day average ADX to prevent whipsaw
+                adx_avg_3 = float(adx_series.tail(3).mean())
+                regime["adx_avg_3d"] = round(adx_avg_3, 2)
+
+                # Trending: ADX avg > 25; Range-bound: ADX avg < 20
+                # Between 20-25 is a dead zone — keep previous classification
+                if adx_avg_3 >= 25:
+                    regime["directional"] = "trending"
+                elif adx_avg_3 <= 20:
+                    regime["directional"] = "range_bound"
+                else:
+                    # Dead zone — load previous regime if available
+                    prev_regime = _load_previous_regime()
+                    regime["directional"] = prev_regime.get("directional", "range_bound")
+
+                # +DI vs -DI for trend direction within trending regime
+                di_pos = adx_ind.adx_pos().dropna()
+                di_neg = adx_ind.adx_neg().dropna()
+                if len(di_pos) > 0 and len(di_neg) > 0:
+                    regime["di_positive"] = round(float(di_pos.iloc[-1]), 2)
+                    regime["di_negative"] = round(float(di_neg.iloc[-1]), 2)
+        except Exception as e:
+            logger.warning(f"ADX calculation failed: {e}")
+
+    # SPY 50-day slope for legacy trend classification
     try:
         spy = yf.Ticker("SPY")
         spy_hist = spy.history(period="3mo", interval="1d")
@@ -198,7 +263,6 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
             close_50 = spy_hist["Close"].tail(50)
             x = np.arange(len(close_50))
             slope = np.polyfit(x, close_50.values, 1)[0]
-            # Normalize slope as % of price per day
             avg_price = close_50.mean()
             slope_pct = (slope / avg_price) * 100 if avg_price > 0 else 0
 
@@ -213,8 +277,32 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     except Exception as e:
         logger.warning(f"SPY trend classification failed: {e}")
 
-    logger.info(f"Regime: trend={regime['trend']}, volatility={regime['volatility']}, VIX={regime['vix']}")
+    # Strategy mode recommendation based on regime
+    if regime["directional"] == "trending":
+        regime["strategy_mode"] = "momentum"
+    else:
+        regime["strategy_mode"] = "mean_reversion"
+
+    # Save regime for hysteresis on next cycle
+    _save_current_regime(regime)
+
+    logger.info(
+        f"Regime: {regime['directional']} (ADX={regime['adx']:.1f}) "
+        f"trend={regime['trend']}, vol={regime['volatility']}, VIX={regime['vix']}"
+    )
     return regime
+
+
+def _load_previous_regime() -> dict:
+    """Load the previous regime classification for hysteresis."""
+    from .utils import KNOWLEDGE_DIR, load_json
+    return load_json(KNOWLEDGE_DIR / "current_regime.json", default={})
+
+
+def _save_current_regime(regime: dict) -> None:
+    """Save current regime for hysteresis on next cycle."""
+    from .utils import KNOWLEDGE_DIR, save_json
+    save_json(KNOWLEDGE_DIR / "current_regime.json", regime)
 
 
 def check_macro_gate(config: dict = None) -> dict:

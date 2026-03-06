@@ -669,8 +669,8 @@ async def review_hold_outcomes() -> list[dict]:
 
     # Only review missed gains and a sample of correct holds
     # (we learn more from mistakes than from being right)
-    missed = [h for h in unreviewed if h.get("counterfactual_outcome", {}).get("verdict") == "missed_gain"]
-    correct = [h for h in unreviewed if h.get("counterfactual_outcome", {}).get("verdict") == "correct_hold"]
+    missed = [h for h in unreviewed if (h.get("counterfactual_outcome") or {}).get("verdict") == "missed_gain"]
+    correct = [h for h in unreviewed if (h.get("counterfactual_outcome") or {}).get("verdict") == "correct_hold"]
 
     # Review all missed gains, but only 1 in 3 correct holds (avoid noise)
     to_review = missed + correct[::3]
@@ -706,7 +706,7 @@ async def review_hold_outcomes() -> list[dict]:
 
 async def _review_single_hold(hold: dict) -> dict | None:
     """Review a single hold decision and extract a lesson."""
-    cf = hold.get("counterfactual_outcome", {})
+    cf = hold.get("counterfactual_outcome") or {}
     strongest = hold.get("strongest_signal_ignored", {})
     balance = hold.get("signal_balance", {})
     analysis = hold.get("hold_analysis", {})
@@ -946,7 +946,7 @@ async def discover_patterns() -> list[dict]:
     # Summarize scored HOLD decisions
     hold_summary = []
     for h in scored_holds[-15:]:
-        cf = h.get("counterfactual_outcome", {})
+        cf = h.get("counterfactual_outcome") or {}
         sig = h.get("strongest_signal_ignored", {})
         hold_summary.append(
             f"  HOLD @ ${h.get('price_at_hold', 0):.2f} "
@@ -1107,14 +1107,14 @@ async def write_journal_entry(portfolio: dict) -> str:
     # HOLD performance summary
     hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
     scored_holds = [h for h in hold_log if h.get("counterfactual_scored")]
-    missed = [h for h in scored_holds if h.get("counterfactual_outcome", {}).get("verdict") == "missed_gain"]
-    correct = [h for h in scored_holds if h.get("counterfactual_outcome", {}).get("verdict") == "correct_hold"]
+    missed = [h for h in scored_holds if (h.get("counterfactual_outcome") or {}).get("verdict") == "missed_gain"]
+    correct = [h for h in scored_holds if (h.get("counterfactual_outcome") or {}).get("verdict") == "correct_hold"]
     hold_lessons = [l for l in lessons if l.get("source") == "hold_counterfactual"]
 
     hold_section = "  No scored holds yet."
     if scored_holds:
         total_missed_pnl = sum(
-            abs(h.get("counterfactual_outcome", {}).get("hypothetical_pnl", 0))
+            abs((h.get("counterfactual_outcome") or {}).get("hypothetical_pnl", 0))
             for h in missed
         )
         hold_section = (

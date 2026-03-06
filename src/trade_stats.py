@@ -18,6 +18,7 @@ CONSTRAINTS_PATH = KNOWLEDGE_DIR / "constraints.json"
 # Dimensions we slice trades by
 DIMENSIONS = [
     "regime_trend",        # bull / bear / sideways
+    "regime_directional",  # trending / range_bound (ADX-based)
     "regime_volatility",   # high / normal / low
     "thesis_direction",    # bullish / bearish / neutral
     "trigger_type",        # news_high_impact / price_level_break / volume_spike / etc.
@@ -37,6 +38,8 @@ def _extract_dimension(txn: dict, dim: str) -> str | None:
 
     if dim == "regime_trend":
         return tc.get("regime_trend") or regime.get("trend")
+    elif dim == "regime_directional":
+        return tc.get("regime_directional") or regime.get("directional")
     elif dim == "regime_volatility":
         return tc.get("regime_volatility") or regime.get("volatility")
     elif dim == "thesis_direction":
@@ -288,7 +291,13 @@ def generate_constraints(stats: dict = None) -> list[dict]:
                 continue
 
             n = bucket.get("sample_size", 0)
-            hit_rate = bucket.get("weighted_hit_rate", bucket.get("hit_rate", 0.5))
+            weighted_total = bucket.get("weighted_total", 0.0)
+            # Use ONLY weighted_hit_rate — never fall back to stale permanent hit_rate
+            hit_rate = bucket.get("weighted_hit_rate", 0.5)
+
+            # Require sufficient recency-weighted data, not just raw count
+            if weighted_total < 3.0:
+                continue
 
             # Severe underperformance: hit rate < 20% with enough data
             if hit_rate < 0.20 and n >= MIN_CONSTRAINT_SAMPLE + 3:
@@ -374,11 +383,11 @@ def apply_statistical_constraints(
                 f"-- position {old:.4f} -> {modified:.4f} shares"
             )
 
-    # Floor: never reduce below 10% of original (prevent total lockout)
-    floor = round(max_shares * 0.1, 4)
+    # Floor: never reduce below 25% of original (prevent death spiral lockout)
+    floor = round(max_shares * 0.25, 4)
     if modified < floor and max_shares > 0:
         modified = floor
-        logger.info(f"Constraint floor: clamped to {floor:.4f} (10% of original)")
+        logger.info(f"Constraint floor: clamped to {floor:.4f} (25% of original)")
 
     return modified, applied
 

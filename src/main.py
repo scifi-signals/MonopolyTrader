@@ -329,6 +329,7 @@ def run_cycle_v2():
         # Build trade_context for this cycle (Connection 1: context → transaction)
         trade_context = {
             "regime_trend": regime.get("trend", "unknown"),
+            "regime_directional": regime.get("directional", "unknown"),
             "regime_volatility": regime.get("volatility", "unknown"),
             "thesis_direction": thesis.direction,
             "thesis_conviction": thesis.conviction,

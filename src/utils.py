@@ -141,18 +141,21 @@ def call_ai_with_fallback(
     user: str,
     max_tokens: int = 1500,
     config: dict = None,
+    model: str = None,
 ) -> tuple[str, str]:
     """Call an AI model with automatic fallback between providers.
 
     Tries Anthropic (direct) first, then OpenRouter as fallback.
     Returns (response_text, model_id).
 
-    Requires ANTHROPIC_API_KEY in env. For fallback, set OPENROUTER_API_KEY.
+    Args:
+        model: Override the model to use. If None, uses config["anthropic_model"].
     """
     if config is None:
         config = load_config()
 
-    model = config.get("anthropic_model", "claude-sonnet-4-20250514")
+    if model is None:
+        model = config.get("anthropic_model", "claude-sonnet-4-20250514")
     logger = logging.getLogger("ai_fallback")
 
     # Provider 1: Anthropic direct

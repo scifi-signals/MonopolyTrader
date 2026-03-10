@@ -370,6 +370,130 @@ def get_world_snapshot(config: dict = None) -> dict:
     return result
 
 
+def get_options_snapshot(ticker: str) -> dict:
+    """Fetch options market data: put/call ratio, max pain, unusual volume."""
+    try:
+        stock = yf.Ticker(ticker)
+        expirations = stock.options
+        if not expirations:
+            return {}
+
+        # Use nearest expiration
+        nearest = expirations[0]
+        chain = stock.option_chain(nearest)
+        calls = chain.calls
+        puts = chain.puts
+
+        # Put/call ratio by open interest
+        total_call_oi = int(calls["openInterest"].sum()) if "openInterest" in calls.columns else 0
+        total_put_oi = int(puts["openInterest"].sum()) if "openInterest" in puts.columns else 0
+        pc_ratio = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0
+
+        # Max pain: strike with highest combined OI
+        all_strikes = set(calls["strike"].tolist() + puts["strike"].tolist())
+        max_pain_strike = 0
+        max_oi = 0
+        for strike in all_strikes:
+            call_oi = int(calls.loc[calls["strike"] == strike, "openInterest"].sum()) if not calls.empty else 0
+            put_oi = int(puts.loc[puts["strike"] == strike, "openInterest"].sum()) if not puts.empty else 0
+            total_oi = call_oi + put_oi
+            if total_oi > max_oi:
+                max_oi = total_oi
+                max_pain_strike = strike
+
+        # Unusual volume: any contract with volume > 5x its OI
+        unusual = False
+        for df in [calls, puts]:
+            if "volume" in df.columns and "openInterest" in df.columns:
+                mask = (df["volume"] > 5 * df["openInterest"]) & (df["volume"] > 100)
+                if mask.any():
+                    unusual = True
+                    break
+
+        return {
+            "put_call_ratio": pc_ratio,
+            "max_pain": round(float(max_pain_strike), 2),
+            "unusual_volume": unusual,
+            "nearest_expiry": nearest,
+            "total_call_oi": total_call_oi,
+            "total_put_oi": total_put_oi,
+        }
+    except Exception as e:
+        logger.warning(f"Options snapshot failed: {e}")
+        return {}
+
+
+def get_analyst_consensus(ticker: str) -> dict:
+    """Fetch analyst recommendations and price targets."""
+    try:
+        stock = yf.Ticker(ticker)
+        result = {}
+
+        # Recommendations
+        try:
+            recs = stock.recommendations
+            if recs is not None and not recs.empty:
+                latest = recs.iloc[-1]
+                result["strong_buy"] = int(latest.get("strongBuy", 0))
+                result["buy"] = int(latest.get("buy", 0))
+                result["hold"] = int(latest.get("hold", 0))
+                result["sell"] = int(latest.get("sell", 0))
+                result["strong_sell"] = int(latest.get("strongSell", 0))
+        except Exception:
+            pass
+
+        # Price targets
+        try:
+            targets = stock.analyst_price_targets
+            if targets is not None:
+                result["target_mean"] = round(float(targets.get("mean", 0)), 2)
+                result["target_high"] = round(float(targets.get("high", 0)), 2)
+                result["target_low"] = round(float(targets.get("low", 0)), 2)
+                result["target_current"] = round(float(targets.get("current", 0)), 2)
+        except Exception:
+            pass
+
+        return result
+    except Exception as e:
+        logger.warning(f"Analyst consensus failed: {e}")
+        return {}
+
+
+def get_institutional_data(ticker: str) -> dict:
+    """Fetch institutional ownership and short interest."""
+    try:
+        stock = yf.Ticker(ticker)
+        result = {}
+
+        # Institutional holders
+        try:
+            holders = stock.institutional_holders
+            if holders is not None and not holders.empty:
+                result["top_holders"] = holders["Holder"].head(5).tolist()
+                total_pct = holders["pctHeld"].sum() if "pctHeld" in holders.columns else 0
+                result["institutional_pct"] = round(float(total_pct) * 100, 1)
+        except Exception:
+            pass
+
+        # Short interest from info
+        try:
+            info = stock.info
+            if info:
+                short_pct = info.get("shortPercentOfFloat", 0)
+                if short_pct:
+                    result["short_interest_pct"] = round(float(short_pct) * 100, 2)
+                shares_short = info.get("sharesShort", 0)
+                if shares_short:
+                    result["shares_short"] = int(shares_short)
+        except Exception:
+            pass
+
+        return result
+    except Exception as e:
+        logger.warning(f"Institutional data failed: {e}")
+        return {}
+
+
 def _last(series: pd.Series) -> float | None:
     """Get the last non-NaN value from a series, rounded."""
     val = series.dropna()

@@ -5,6 +5,7 @@ Raw market data + world context + trade journal → Claude reasons → Claude de
 """
 
 import json
+from datetime import datetime
 from .utils import (
     load_config, format_currency, iso_now, setup_logging,
     call_ai_with_fallback,
@@ -14,6 +15,7 @@ from .news_feed import NewsFeed, format_news_for_prompt
 from .web_search import format_search_results
 from .events import format_events_for_brief
 from .thesis_builder import format_playbook_for_brief
+from .analyst import load_mid, format_mid_for_system_prompt, format_briefing_for_prompt
 
 logger = setup_logging("agent")
 
@@ -161,6 +163,77 @@ def build_market_brief(
         parts.append("=== WEB SEARCH (last 24h) ===")
         parts.append(format_search_results(web_results))
 
+    # === Today's Briefing ===
+    try:
+        from .utils import load_json, DATA_DIR
+        briefing = load_json(DATA_DIR / "daily_briefing.json", default={})
+        if briefing:
+            parts.append("")
+            parts.append("=== TODAY'S BRIEFING ===")
+            briefing_text = format_briefing_for_prompt(briefing)
+            # Check staleness
+            import os
+            briefing_path = DATA_DIR / "daily_briefing.json"
+            if briefing_path.exists():
+                mtime = os.path.getmtime(briefing_path)
+                age_hours = (datetime.now().timestamp() - mtime) / 3600
+                if age_hours > 6:
+                    parts.append(f"[STALE — generated {age_hours:.0f}h ago]")
+            parts.append(briefing_text)
+    except Exception:
+        pass
+
+    # === Options Flow ===
+    try:
+        from .market_data import get_options_snapshot
+        options = get_options_snapshot(ticker)
+        if options:
+            parts.append("")
+            parts.append("=== OPTIONS FLOW ===")
+            parts.append(f"  Put/Call Ratio: {options.get('put_call_ratio', 'N/A')}")
+            parts.append(f"  Max Pain: ${options.get('max_pain', 'N/A')}")
+            parts.append(f"  Unusual Volume: {'YES' if options.get('unusual_volume') else 'No'}")
+            parts.append(f"  Nearest Expiry: {options.get('nearest_expiry', 'N/A')}")
+    except Exception:
+        pass
+
+    # === Analyst Consensus ===
+    try:
+        from .market_data import get_analyst_consensus
+        analysts = get_analyst_consensus(ticker)
+        if analysts:
+            parts.append("")
+            parts.append("=== ANALYST CONSENSUS ===")
+            buys = analysts.get('strong_buy', 0) + analysts.get('buy', 0)
+            holds = analysts.get('hold', 0)
+            sells = analysts.get('sell', 0) + analysts.get('strong_sell', 0)
+            parts.append(f"  Buy: {buys}, Hold: {holds}, Sell: {sells}")
+            if analysts.get('target_mean'):
+                vs_current = ""
+                if current.get("price") and analysts["target_mean"] > 0:
+                    diff = ((analysts["target_mean"] - current["price"]) / current["price"]) * 100
+                    vs_current = f" ({diff:+.1f}% vs current)"
+                parts.append(f"  Mean Target: ${analysts['target_mean']}{vs_current}")
+                parts.append(f"  Range: ${analysts.get('target_low', '?')} - ${analysts.get('target_high', '?')}")
+    except Exception:
+        pass
+
+    # === Institutional ===
+    try:
+        from .market_data import get_institutional_data
+        inst = get_institutional_data(ticker)
+        if inst:
+            parts.append("")
+            parts.append("=== INSTITUTIONAL ===")
+            if inst.get("institutional_pct"):
+                parts.append(f"  Institutional Ownership: {inst['institutional_pct']}%")
+            if inst.get("short_interest_pct"):
+                parts.append(f"  Short Interest: {inst['short_interest_pct']}%")
+            if inst.get("top_holders"):
+                parts.append(f"  Top Holders: {', '.join(inst['top_holders'][:3])}")
+    except Exception:
+        pass
+
     # === Portfolio ===
     parts.append("")
     parts.append("=== PORTFOLIO ===")
@@ -223,18 +296,29 @@ def make_decision(
 ) -> dict:
     """Call Claude to make a trading decision.
 
-    One brief, one decision. No multi-step, no analyst/trader split.
+    v5: System prompt includes Market Intelligence Document.
+    User prompt includes daily briefing + enhanced market data.
     """
     brief = build_market_brief(
         market_data, world, portfolio, news_feed,
         web_results, journal_entries, config, events,
     )
 
-    logger.info(f"Calling Claude for decision (brief ~{len(brief)} chars)")
+    # Build system prompt with Market Intelligence Document
+    system = SYSTEM_PROMPT
+    try:
+        mid = load_mid()
+        mid_text = format_mid_for_system_prompt(mid)
+        if mid_text:
+            system = SYSTEM_PROMPT + "\n\n" + mid_text
+    except Exception as e:
+        logger.warning(f"Failed to load MID for system prompt: {e}")
+
+    logger.info(f"Calling Claude for decision (brief ~{len(brief)} chars, system ~{len(system)} chars)")
 
     try:
         raw, model_used = call_ai_with_fallback(
-            system=SYSTEM_PROMPT,
+            system=system,
             user=brief,
             max_tokens=800,
             config=config,

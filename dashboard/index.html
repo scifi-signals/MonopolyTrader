@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MonopolyTrader v3 Dashboard</title>
+    <title>MonopolyTrader v5 Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
@@ -14,7 +14,7 @@
 
         <!-- Header -->
         <header>
-            <h1>MonopolyTrader <span class="version-tag">v3</span></h1>
+            <h1>MonopolyTrader <span class="version-tag">v5</span></h1>
             <div class="live-badge">
                 <div class="live-dot"></div>
                 <span id="live-price">Loading...</span>
@@ -31,15 +31,20 @@
             <!-- Market Status Banner -->
             <div id="status-banner" class="status-banner"></div>
 
-            <!-- Milestone Banners -->
-            <div id="milestone-banners"></div>
-
-            <!-- Am I Beating the Market? (PRIMARY VIEW) -->
-            <div class="card benchmark-card">
-                <h2>Am I Beating the Market?</h2>
-                <div id="verdict-badge" class="verdict-badge"></div>
-                <div id="benchmark-bars" class="benchmark-bars"></div>
-                <div id="benchmark-detail" class="benchmark-detail"></div>
+            <!-- Market Intelligence Card -->
+            <div id="market-intel-section" class="card market-intel-card" style="display:none">
+                <div class="market-intel-accent"></div>
+                <div class="card-header-row">
+                    <h2>Market Intelligence</h2>
+                    <span id="intel-updated" class="meta-time"></span>
+                </div>
+                <div id="intel-thesis" class="intel-thesis"></div>
+                <div class="intel-grid">
+                    <div id="intel-levels" class="intel-panel"></div>
+                    <div id="intel-catalysts" class="intel-panel"></div>
+                </div>
+                <div id="intel-sector" class="intel-sector"></div>
+                <div id="intel-lessons" class="intel-lessons"></div>
             </div>
 
             <!-- Agent's Mind -->
@@ -49,70 +54,23 @@
                     <h2>Agent's Mind</h2>
                     <span id="agent-mind-time" class="agent-mind-time"></span>
                 </div>
-
-                <!-- Decision Banner -->
                 <div id="agent-mind-decision" class="agent-mind-decision"></div>
-
-                <!-- Reasoning -->
                 <div id="agent-mind-reasoning" class="agent-mind-reasoning"></div>
-
-                <!-- Signal Breakdown -->
-                <div id="agent-mind-signals" class="agent-mind-signals"></div>
-
-                <!-- Regime Chips -->
                 <div id="agent-mind-regime" class="agent-mind-regime"></div>
-
-                <!-- Hold Analysis (conditional) -->
-                <div id="agent-mind-hold" class="agent-mind-hold-box" style="display:none"></div>
             </div>
 
-            <!-- Graduation Progress -->
-            <div class="card">
-                <h2>Graduation Progress</h2>
-                <div id="graduation-grid" class="graduation-grid"></div>
+            <!-- Daily Briefing Card -->
+            <div id="briefing-section" class="card briefing-card" style="display:none">
+                <div class="briefing-accent"></div>
+                <div class="card-header-row">
+                    <h2>Daily Briefing</h2>
+                    <span id="briefing-time" class="meta-time"></span>
+                </div>
+                <div id="briefing-thesis-status" class="briefing-block"></div>
+                <div id="briefing-posture" class="briefing-block"></div>
+                <div id="briefing-scenarios" class="briefing-block"></div>
+                <div id="briefing-data-points" class="briefing-block"></div>
             </div>
-
-            <!-- Portfolio Chart with ALL benchmark lines -->
-            <div class="card">
-                <h2>Portfolio Value vs Benchmarks</h2>
-                <div class="chart-container">
-                    <canvas id="portfolio-chart"></canvas>
-                </div>
-            </div>
-
-            <!-- Performance Analytics -->
-            <div class="grid-2">
-                <div class="card">
-                    <h2>Portfolio Drawdown</h2>
-                    <div class="chart-container" style="height:220px">
-                        <canvas id="drawdown-chart"></canvas>
-                    </div>
-                </div>
-                <div class="card">
-                    <h2>Rolling Sharpe Ratio <span class="chart-subtitle">20-day, annualized</span></h2>
-                    <div class="chart-container" style="height:220px">
-                        <canvas id="sharpe-chart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid-2">
-                <div class="card">
-                    <h2>Prediction Accuracy Trend</h2>
-                    <div class="chart-container" style="height:220px">
-                        <canvas id="accuracy-trend-chart"></canvas>
-                    </div>
-                </div>
-                <div class="card">
-                    <h2>Agent vs Random Traders</h2>
-                    <div class="chart-container" style="height:220px">
-                        <canvas id="random-dist-chart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Health & Alerts Strip -->
-            <div id="health-strip" class="health-strip"></div>
 
             <!-- KPI Strip -->
             <div class="kpi-strip">
@@ -136,57 +94,52 @@
                     <div class="kpi-label">Win Rate</div>
                     <div id="kpi-winrate"></div>
                 </div>
-                <div class="kpi">
-                    <div class="kpi-label">Prediction Accuracy</div>
-                    <div id="kpi-accuracy"></div>
+            </div>
+
+            <!-- Am I Beating the Market? -->
+            <div class="card benchmark-card">
+                <h2>Am I Beating the Market?</h2>
+                <div id="verdict-badge" class="verdict-badge"></div>
+                <div id="benchmark-bars" class="benchmark-bars"></div>
+                <div id="benchmark-detail" class="benchmark-detail"></div>
+            </div>
+
+            <!-- Portfolio Chart -->
+            <div class="card">
+                <h2>Portfolio Value vs Buy & Hold TSLA</h2>
+                <div class="chart-container">
+                    <canvas id="portfolio-chart"></canvas>
                 </div>
             </div>
 
-            <!-- Ensemble Leaderboard (multi-agent) -->
-            <div id="ensemble-section" class="card" style="display:none">
-                <h2>Agent Ensemble Leaderboard</h2>
-                <div id="ensemble-leaderboard"></div>
-                <div id="ensemble-harmony" class="harmony-summary"></div>
-            </div>
-
-            <!-- HOLD Log -->
-            <div id="hold-section" class="card" style="display:none">
-                <h2>HOLD Decisions</h2>
-                <p class="section-sub">Trades the agent decided NOT to make — with counterfactual tracking.</p>
-                <div id="hold-log"></div>
-            </div>
-
-            <!-- Strategy Section -->
+            <!-- Performance Analytics -->
             <div class="grid-2">
                 <div class="card">
-                    <h2>Strategy Weights</h2>
-                    <div id="strategy-bars"></div>
+                    <h2>Portfolio Drawdown</h2>
+                    <div class="chart-container" style="height:220px">
+                        <canvas id="drawdown-chart"></canvas>
+                    </div>
                 </div>
                 <div class="card">
-                    <h2>Weight Evolution</h2>
+                    <h2>Rolling Sharpe Ratio <span class="chart-subtitle">20-day, annualized</span></h2>
                     <div class="chart-container" style="height:220px">
-                        <canvas id="weight-chart"></canvas>
+                        <canvas id="sharpe-chart"></canvas>
                     </div>
                 </div>
             </div>
 
-            <!-- Predictions -->
-            <div class="card">
-                <h2>Prediction Scoreboard</h2>
-                <div style="overflow-x:auto">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>When</th>
-                                <th>Price</th>
-                                <th>Score</th>
-                                <th>Predictions</th>
-                                <th>Reasoning</th>
-                            </tr>
-                        </thead>
-                        <tbody id="predictions-body"></tbody>
-                    </table>
-                </div>
+            <!-- Playbook Card -->
+            <div id="playbook-section" class="card" style="display:none">
+                <h2>Playbook</h2>
+                <p class="section-sub">Statistical performance by market condition. Rebuilt on every trade close.</p>
+                <div id="playbook-content"></div>
+            </div>
+
+            <!-- Trade Journal -->
+            <div id="journal-section" class="card" style="display:none">
+                <h2>Trade Journal</h2>
+                <div id="journal-stats" class="journal-stats-bar"></div>
+                <div id="journal-entries"></div>
             </div>
 
             <!-- Trade Log -->
@@ -199,33 +152,12 @@
                                 <th>When</th>
                                 <th>Action</th>
                                 <th>Details</th>
-                                <th>Strategy</th>
                                 <th>P&L</th>
-                                <th>Hypothesis</th>
-                                <th>Review</th>
+                                <th>Reasoning</th>
                             </tr>
                         </thead>
                         <tbody id="trades-body"></tbody>
                     </table>
-                </div>
-            </div>
-
-            <!-- Knowledge Section -->
-            <div class="card">
-                <h2>Knowledge Base</h2>
-                <div class="tabs">
-                    <div class="tab active" data-tab="tab-lessons">Lessons</div>
-                    <div class="tab" data-tab="tab-patterns">Patterns</div>
-                    <div class="tab" data-tab="tab-journal">Journal</div>
-                </div>
-                <div id="tab-lessons" class="tab-content active">
-                    <div id="lessons-list"></div>
-                </div>
-                <div id="tab-patterns" class="tab-content">
-                    <div id="patterns-list"></div>
-                </div>
-                <div id="tab-journal" class="tab-content">
-                    <div class="journal-content" id="journal-content"></div>
                 </div>
             </div>
 

@@ -29,6 +29,7 @@ from .news_feed import fetch_news_feed
 from .web_search import search_tsla_news
 from .events import get_upcoming_events
 from .tags import compute_tags
+from .analyst import run_nightly_update, run_pre_market
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
@@ -189,6 +190,14 @@ def run_cycle():
                 if action == "SELL" and txn.get("realized_pnl") is not None:
                     _close_journal_for_sell(txn)
 
+                    # Rebuild playbook immediately on trade close
+                    try:
+                        from .thesis_builder import build_ledger
+                        build_ledger()
+                        logger.info("Playbook rebuilt after trade close")
+                    except Exception as e:
+                        logger.warning(f"Playbook rebuild failed: {e}")
+
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
@@ -197,7 +206,10 @@ def run_cycle():
         # 7. Save latest cycle for dashboard
         _save_latest_cycle(decision, market_data, regime, world)
 
-        # 8. Update dashboard
+        # 8. Monitor portfolio health
+        _check_portfolio_health(portfolio)
+
+        # 9. Update dashboard
         _update_dashboard(market_data, portfolio)
 
     except Exception as e:
@@ -246,12 +258,48 @@ def _update_dashboard(market_data: dict, portfolio: dict):
         logger.warning(f"Dashboard update failed: {e}")
 
 
+def _check_portfolio_health(portfolio: dict):
+    """Monitor portfolio for concerning patterns."""
+    value = portfolio.get("total_value", 1000)
+    config = load_config()
+    starting = config.get("starting_balance", 1000)
+
+    if value < starting * 0.7:
+        logger.error(f"ALERT: Portfolio at ${value:.2f} — 30%+ drawdown from ${starting}")
+    elif value < starting * 0.8:
+        logger.warning(f"WARNING: Portfolio at ${value:.2f} — 20%+ drawdown from ${starting}")
+
+    # Check for consecutive losses
+    transactions = load_portfolio().get("total_trades", 0)
+    if transactions >= 5:
+        from .portfolio import load_transactions
+        txns = load_transactions()
+        recent_sells = [t for t in txns if t["action"] == "SELL"][-5:]
+        if len(recent_sells) >= 5 and all(t.get("realized_pnl", 0) < 0 for t in recent_sells):
+            logger.warning("WARNING: 5 consecutive losing trades")
+
+
+def run_pre_market_task():
+    """Run pre-market analysis at 9:00 AM ET on weekdays."""
+    if now_et().weekday() > 4:
+        return
+    try:
+        logger.info("--- Pre-Market Research ---")
+        briefing = run_pre_market()
+        logger.info(
+            f"Pre-market complete: status={briefing.get('thesis_status')}, "
+            f"posture={briefing.get('recommended_posture')}"
+        )
+    except Exception as e:
+        logger.error(f"Pre-market research failed: {e}")
+
+
 def run_daily_tasks():
-    """Run after market close: snapshot + thesis ledger rebuild."""
+    """Run after market close: snapshot + thesis ledger rebuild + analyst update."""
     try:
         save_snapshot()
     except Exception as e:
-        logger.warning(f"Daily tasks failed: {e}")
+        logger.warning(f"Snapshot failed: {e}")
 
     # Rebuild thesis ledger from all trades
     try:
@@ -264,6 +312,16 @@ def run_daily_tasks():
     except Exception as e:
         logger.warning(f"Thesis ledger build failed: {e}")
 
+    # Run nightly analyst — update Market Intelligence Document
+    try:
+        mid = run_nightly_update()
+        logger.info(
+            f"Nightly analyst complete: thesis={mid.get('thesis', {}).get('direction')}, "
+            f"confidence={mid.get('thesis', {}).get('confidence')}"
+        )
+    except Exception as e:
+        logger.error(f"Nightly analyst failed: {e}")
+
     try:
         from .reporter import generate_dashboard_data
         generate_dashboard_data(full=True)
@@ -272,13 +330,15 @@ def run_daily_tasks():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MonopolyTrader v4")
+    parser = argparse.ArgumentParser(description="MonopolyTrader v5")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--report", action="store_true", help="Generate dashboard and exit")
+    parser.add_argument("--analyst", action="store_true", help="Run nightly analyst and exit")
+    parser.add_argument("--premarket", action="store_true", help="Run pre-market briefing and exit")
     args = parser.parse_args()
 
     config = load_config()
-    logger.info("MonopolyTrader v4 starting")
+    logger.info("MonopolyTrader v5 starting")
 
     # Ensure data directories exist
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -290,6 +350,16 @@ def main():
         logger.info("Dashboard generated")
         return
 
+    if args.analyst:
+        mid = run_nightly_update()
+        logger.info(f"Analyst complete: {mid.get('thesis', {}).get('direction')}")
+        return
+
+    if args.premarket:
+        briefing = run_pre_market()
+        logger.info(f"Pre-market complete: {briefing.get('thesis_status')}")
+        return
+
     if args.once:
         run_cycle()
         return
@@ -297,9 +367,10 @@ def main():
     # Schedule
     interval = config.get("poll_interval_minutes", 15)
     schedule.every(interval).minutes.do(run_cycle)
+    schedule.every().day.at("09:00").do(run_pre_market_task)
     schedule.every().day.at("16:15").do(run_daily_tasks)
 
-    logger.info(f"Scheduler started: every {interval}min during market hours")
+    logger.info(f"Scheduler started: every {interval}min + 9:00 pre-market + 16:15 daily tasks")
     run_cycle()  # Run immediately
 
     while _running:

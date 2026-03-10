@@ -1,7 +1,6 @@
 """Dashboard reporter — generates JSON data for the dashboard.
 
-v4: Simplified. Removed knowledge_base, strategies, thesis, trade_stats,
-    ensemble, prediction tracking. Added trade journal display.
+v5: Added Market Intelligence Document and daily briefing to dashboard data.
 """
 
 import math
@@ -65,19 +64,11 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Latest decision cycle for Agent's Mind card
     latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default=None)
 
-    # Health & alerts (optional — observability module may reference old imports)
-    health = {}
-    active_alerts = []
-    try:
-        from .observability import HealthChecker
-        health = HealthChecker().check()
-    except Exception:
-        pass
-    try:
-        alerts_data = load_json(DATA_DIR.parent / "logs" / "alerts.json", default=[])
-        active_alerts = [a for a in alerts_data if a.get("status") == "active"]
-    except Exception:
-        pass
+    # Market Intelligence Document
+    market_intelligence = load_json(DATA_DIR / "market_intelligence.json", default={})
+
+    # Daily briefing
+    daily_briefing = load_json(DATA_DIR / "daily_briefing.json", default={})
 
     # Performance analytics
     performance_analytics = _build_performance_analytics(snapshots)
@@ -104,8 +95,8 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "journal_stats": journal_stats,
         "thesis_ledger": thesis_ledger,
         "learning_metrics": learning_metrics,
-        "health": health,
-        "active_alerts": active_alerts,
+        "market_intelligence": market_intelligence,
+        "daily_briefing": daily_briefing,
         "performance_analytics": performance_analytics,
         "market_open": is_market_open(),
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),

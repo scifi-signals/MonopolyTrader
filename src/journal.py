@@ -162,6 +162,16 @@ def get_recent_entries(n: int = 10) -> list[dict]:
     return list(reversed(entries[-n:]))
 
 
+def get_entries_since(date_str: str) -> list[dict]:
+    """Get all journal entries since a given date (inclusive), oldest-first.
+
+    Args:
+        date_str: ISO date string, e.g. "2026-03-01"
+    """
+    entries = load_journal()
+    return [e for e in entries if e.get("timestamp", "") >= date_str]
+
+
 def format_journal_for_brief(entries: list[dict]) -> str:
     """Format journal entries as text for the Claude trading brief."""
     if not entries:

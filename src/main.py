@@ -13,7 +13,6 @@ import argparse
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 import schedule
 
 from .utils import (
@@ -120,16 +119,9 @@ def run_cycle():
             config.get("journal", {}).get("max_entries_in_brief", 5)
         )
 
-        # 4. Check cooldown (standard + anti-churn)
+        # 4. Check cooldown
         if not check_cooldown(ticker):
             logger.info("Cooldown active — skipping Claude call")
-            _update_dashboard(market_data, portfolio)
-            return
-
-        # Anti-churn guard: escalating cooldown after consecutive losses
-        churn_skip = _check_churn_cooldown(ticker)
-        if churn_skip:
-            logger.info(f"Anti-churn cooldown: {churn_skip}")
             _update_dashboard(market_data, portfolio)
             return
 
@@ -209,7 +201,9 @@ def run_cycle():
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
-            logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:120]}")
+            strategy = decision.get("strategy", "")
+            reasoning = decision.get("reasoning", "N/A")[:120]
+            logger.info(f"HOLD [{strategy}] — {reasoning}")
 
         # 7. Save latest cycle for dashboard
         _save_latest_cycle(decision, market_data, regime, world)
@@ -222,58 +216,6 @@ def run_cycle():
 
     except Exception as e:
         logger.error(f"v5 decision cycle error: {e}", exc_info=True)
-
-
-def _check_churn_cooldown(ticker: str) -> str | None:
-    """Enforce escalating cooldowns after consecutive small losses.
-
-    Returns a reason string if we should skip this cycle, None if OK to trade.
-
-    Logic:
-    - 3 consecutive losses with avg P&L > -$3: 30-min cooldown from last trade
-    - 5+ consecutive losses: 60-min cooldown from last trade
-    - Any loss where the buy and sell were in the same 15-min cycle range:
-      counted as churn (same-range round-trip)
-    """
-    from .portfolio import load_transactions
-    transactions = load_transactions()
-    sells = [t for t in transactions if t["action"] == "SELL" and t["ticker"] == ticker]
-    if len(sells) < 3:
-        return None
-
-    # Count consecutive losses from most recent
-    consecutive_losses = 0
-    total_lost = 0.0
-    for t in reversed(sells):
-        pnl = t.get("realized_pnl", 0) or 0
-        if pnl < 0:
-            consecutive_losses += 1
-            total_lost += pnl
-        else:
-            break
-
-    if consecutive_losses < 3:
-        return None
-
-    # Determine cooldown based on streak
-    if consecutive_losses >= 5:
-        cooldown_minutes = 60
-    else:
-        cooldown_minutes = 30
-
-    # Check time since last sell
-    last_sell_time = datetime.fromisoformat(sells[-1]["timestamp"])
-    now = datetime.now(timezone.utc)
-    minutes_since = (now - last_sell_time).total_seconds() / 60
-
-    if minutes_since < cooldown_minutes:
-        remaining = cooldown_minutes - minutes_since
-        return (
-            f"{consecutive_losses} consecutive losses (${total_lost:.2f}), "
-            f"waiting {remaining:.0f}min more ({cooldown_minutes}min cooldown)"
-        )
-
-    return None
 
 
 def _close_journal_for_sell(sell_txn: dict):
@@ -300,6 +242,7 @@ def _save_latest_cycle(decision: dict, market_data: dict, regime: dict, world: d
         "action": decision.get("action", "HOLD"),
         "shares": decision.get("shares", 0),
         "confidence": decision.get("confidence", 0),
+        "strategy": decision.get("strategy", ""),
         "reasoning": decision.get("reasoning", ""),
         "risk_note": decision.get("risk_note", ""),
         "price": market_data.get("current", {}).get("price", 0),

@@ -22,60 +22,41 @@ logger = setup_logging("agent")
 
 SYSTEM_PROMPT = """You are MonopolyTrader v5, an AI trader managing $1,000 of Monopoly dollars on TSLA.
 
-You receive a market brief every 15 minutes during market hours. You see raw indicators, world context, news, and your own trade journal with lessons from past trades.
+You receive a market brief every 15 minutes during market hours. You see raw indicators, world context, news, your trade journal with lessons, your playbook stats, and the Market Intelligence Document with your persistent thesis.
 
-## RULES
+## POSITION LIMITS (enforced by code)
 1. Max 50% of portfolio value in any position
 2. Keep $100 cash minimum
 3. Fractional shares OK
+4. No stop losses — you evaluate every position with context each cycle
 
-## TRADING PHILOSOPHY: CONVICTION OVER ACTIVITY
+## YOUR JOB: DEVELOP AND TEST TRADING STRATEGIES
 
-The WORST thing you can do is churn — buying and selling in the same price range repeatedly, losing to spread each time. A $1.50 loss from a pointless round-trip is REAL money lost.
+You are not just executing trades — you are a strategist. Your goal is to figure out what works in each type of market environment and build a repertoire of strategies through deliberate experimentation.
 
-BEFORE ANY TRADE, ask yourself:
-- What is my SPECIFIC thesis? (Not "momentum" — what catalyst, what level, what timeframe?)
-- Is the expected move LARGER than the spread cost? (See SPREAD COST below)
-- Would I make this same trade if it cost me $5 in commission?
-- Am I reacting to noise, or to a genuine signal?
+Each cycle, think about:
+- What type of market am I in right now? (trending, range-bound, volatile, pre-event, etc.)
+- What strategy makes sense for THIS environment?
+- What specific hypothesis am I testing with this trade?
+- What would prove my hypothesis right or wrong?
 
-### When to HOLD (most of the time):
-- Price is range-bound between support and resistance with no catalyst → HOLD
-- Your last 2-3 trades were small losses in the same price range → HOLD (you're churning)
-- No new information since last cycle → HOLD
-- Regime is "sideways" with low ADX → HOLD unless there's a clear breakout
-- Confidence below 0.6 → HOLD
+Your PLAYBOOK section shows your actual performance broken down by market conditions. Your TRADE JOURNAL shows your recent trades with lessons. Your TRADING STATS show your overall track record. Study these — they are YOUR data from YOUR trades. They tell you what's working and what isn't.
 
-### When to trade:
-- Clear catalyst (earnings, news, macro event) with directional conviction
-- Technical breakout/breakdown through a key level with volume confirmation
-- Thesis from Market Intelligence Document aligning with intraday setup
-- Expected move is 2x+ the spread cost (see SPREAD COST section)
+When something isn't working, adapt. Try a different approach. When something IS working, lean into it. This is how you learn.
 
-### NO STOP LOSSES
-If your position is underwater, evaluate with context every cycle:
-- Why is it falling? Broad market or TSLA-specific?
-- Is the thesis still valid? → Hold or add
-- Thesis broken? → Cut the loss, but don't immediately reverse
+## TRADING COSTS
+Every trade has a real cost in slippage. The SPREAD COST section shows your round-trip breakeven. Factor this into every decision — a strategy that targets moves smaller than the spread cost is a losing strategy by design.
 
-## SPREAD COST
-Every round-trip (buy then sell) costs you money in slippage. The SPREAD COST section in the brief shows your breakeven move. Do NOT trade unless you expect a move AT LEAST 2x the breakeven.
-
-## YOUR PLAYBOOK
-Below you'll see your statistical performance by market conditions. If a setup shows <40% win rate, DO NOT repeat it. Your overall win rate matters — if it's below 30%, you are trading too much and too poorly. Scale back.
-
-## CRITICAL ANTI-CHURN RULES
-1. If you are FLAT (no position) and the market is range-bound: HOLD. Wait for a breakout or catalyst.
-2. If you just sold within the last 2 cycles: do NOT buy back in the same range. Wait for new information.
-3. If your last 3 trades lost money: your next trade needs confidence >= 0.75.
-4. NEVER buy and sell the same stock within 30 minutes unless there's a major news catalyst.
+## STRATEGY FIELD
+In your response, include a "strategy" field naming the strategy you're employing (e.g., "mean_reversion_oversold", "breakout_above_resistance", "pre_catalyst_positioning", "cash_preservation", etc.). This helps you track which strategies work over time.
 
 Respond ONLY with valid JSON:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "shares": <float, 0 if HOLD>,
   "confidence": <float 0-1>,
-  "reasoning": "<your complete analysis: what you see, why you're acting or not, what you expect>",
+  "strategy": "<name of the strategy you're using this cycle>",
+  "reasoning": "<your analysis: what market environment you see, what strategy you're applying, what you expect to happen, what would invalidate your thesis>",
   "risk_note": "<what could go wrong>"
 }"""
 
@@ -285,26 +266,52 @@ def build_market_brief(
     parts.append(f"Breakeven move: >{round_trip_pct:.2f}% (>${price * slippage_pct * 2:.2f}/share)")
     parts.append(f"Minimum target move (2x breakeven): >{round_trip_pct * 2:.2f}% (>${price * slippage_pct * 4:.2f}/share)")
 
-    # === Recent churn detection ===
+    # === Trading Stats (self-awareness) ===
     try:
         from .portfolio import load_transactions
-        recent_txns = load_transactions()
-        recent_sells = [t for t in recent_txns if t["action"] == "SELL"][-5:]
-        if len(recent_sells) >= 3:
-            recent_pnls = [t.get("realized_pnl", 0) for t in recent_sells[-3:]]
-            if all(pnl < 0 for pnl in recent_pnls):
-                total_lost = sum(recent_pnls)
-                parts.append("")
-                parts.append(f">>> WARNING: Last 3 trades ALL LOST money (total: ${total_lost:.2f}). You are CHURNING. <<<")
-                parts.append(">>> DO NOT trade unless confidence >= 0.75 and expected move > 1%. <<<")
+        all_txns = load_transactions()
+        all_sells = [t for t in all_txns if t["action"] == "SELL"]
+        if all_sells:
+            parts.append("")
+            parts.append("=== YOUR TRADING STATS ===")
+            total_sells = len(all_sells)
+            winners = sum(1 for t in all_sells if (t.get("realized_pnl", 0) or 0) > 0)
+            losers = sum(1 for t in all_sells if (t.get("realized_pnl", 0) or 0) < 0)
+            win_rate = (winners / total_sells * 100) if total_sells > 0 else 0
+            total_realized = sum(t.get("realized_pnl", 0) or 0 for t in all_sells)
+            avg_win = 0
+            avg_loss = 0
+            winning_pnls = [t.get("realized_pnl", 0) for t in all_sells if (t.get("realized_pnl", 0) or 0) > 0]
+            losing_pnls = [t.get("realized_pnl", 0) for t in all_sells if (t.get("realized_pnl", 0) or 0) < 0]
+            if winning_pnls:
+                avg_win = sum(winning_pnls) / len(winning_pnls)
+            if losing_pnls:
+                avg_loss = sum(losing_pnls) / len(losing_pnls)
+            parts.append(f"Closed trades: {total_sells} (W:{winners} L:{losers})")
+            parts.append(f"Win rate: {win_rate:.0f}%")
+            parts.append(f"Total realized P&L: ${total_realized:.2f}")
+            parts.append(f"Avg win: ${avg_win:.2f} | Avg loss: ${avg_loss:.2f}")
+
+            # Recent streak
             consecutive_losses = 0
-            for t in reversed(recent_sells):
+            for t in reversed(all_sells):
                 if (t.get("realized_pnl", 0) or 0) < 0:
                     consecutive_losses += 1
                 else:
                     break
-            if consecutive_losses >= 5:
-                parts.append(f">>> CRITICAL: {consecutive_losses} consecutive losing trades. STOP TRADING until you see a clear catalyst. <<<")
+            if consecutive_losses > 0:
+                streak_pnl = sum(t.get("realized_pnl", 0) or 0 for t in all_sells[-consecutive_losses:])
+                parts.append(f"Current streak: {consecutive_losses} consecutive losses (${streak_pnl:.2f})")
+
+            # Today's activity
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_txns = [t for t in all_txns if t["timestamp"].startswith(today)]
+            today_sells = [t for t in today_txns if t["action"] == "SELL"]
+            today_buys = [t for t in today_txns if t["action"] == "BUY"]
+            if today_txns:
+                today_pnl = sum(t.get("realized_pnl", 0) or 0 for t in today_sells)
+                parts.append(f"Today: {len(today_buys)} buys, {len(today_sells)} sells, P&L: ${today_pnl:.2f}")
     except Exception:
         pass
 

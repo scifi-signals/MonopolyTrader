@@ -212,6 +212,7 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         "cash_after": portfolio["cash"],
         "portfolio_value_after": portfolio["total_value"],
         "confidence": decision.get("confidence", 0) if decision else 0,
+        "strategy": decision.get("strategy", "") if decision else "",
         "reasoning": decision.get("reasoning", "") if decision else "",
     }
 

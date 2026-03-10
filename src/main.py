@@ -27,6 +27,7 @@ from .portfolio import (
 from .agent import make_decision
 from .news_feed import fetch_news_feed
 from .web_search import search_tsla_news
+from .events import get_upcoming_events
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
@@ -94,6 +95,18 @@ def run_cycle():
         except Exception as e:
             logger.warning(f"Web search failed: {e}")
 
+        # Upcoming events (FOMC, CPI, earnings)
+        events = {}
+        try:
+            events = get_upcoming_events(hours=72)
+            if events.get("macro_events"):
+                for ev in events["macro_events"]:
+                    logger.info(f"Upcoming event: {ev['event']} in {ev['hours_until']:.0f}h")
+            if events.get("tsla_earnings"):
+                logger.info(f"TSLA earnings: {events['tsla_earnings']['date']} ({events['tsla_earnings']['days_until']}d away)")
+        except Exception as e:
+            logger.warning(f"Events calendar failed: {e}")
+
         # 2. Update portfolio with current price
         portfolio = load_portfolio()
         portfolio = update_market_price(portfolio, ticker, current_price)
@@ -119,6 +132,7 @@ def run_cycle():
             web_results=web_results,
             journal_entries=journal_entries,
             config=config,
+            events=events,
         )
 
         action = decision.get("action", "HOLD")

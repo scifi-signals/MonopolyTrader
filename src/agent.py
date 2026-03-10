@@ -12,6 +12,7 @@ from .utils import (
 from .journal import get_recent_entries, format_journal_for_brief
 from .news_feed import NewsFeed, format_news_for_prompt
 from .web_search import format_search_results
+from .events import format_events_for_brief
 
 logger = setup_logging("agent")
 
@@ -62,6 +63,7 @@ def build_market_brief(
     web_results: list[dict],
     journal_entries: list[dict],
     config: dict,
+    events: dict | None = None,
 ) -> str:
     """Build the complete market brief for Claude.
 
@@ -144,6 +146,12 @@ def build_market_brief(
     else:
         parts.append("No news available.")
 
+    # === Upcoming Events ===
+    if events:
+        parts.append("")
+        parts.append("=== UPCOMING EVENTS ===")
+        parts.append(format_events_for_brief(events))
+
     # === Web Search ===
     if web_results:
         parts.append("")
@@ -198,6 +206,7 @@ def make_decision(
     web_results: list[dict],
     journal_entries: list[dict],
     config: dict,
+    events: dict | None = None,
 ) -> dict:
     """Call Claude to make a trading decision.
 
@@ -205,7 +214,7 @@ def make_decision(
     """
     brief = build_market_brief(
         market_data, world, portfolio, news_feed,
-        web_results, journal_entries, config,
+        web_results, journal_entries, config, events,
     )
 
     logger.info(f"Calling Claude for decision (brief ~{len(brief)} chars)")

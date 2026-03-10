@@ -1,7 +1,7 @@
 """v5 Analyst — nightly intelligence update + pre-market briefing.
 
-Separates research from trading. Haiku builds persistent market intelligence
-that Claude Sonnet uses to make informed decisions every cycle.
+Separates research from trading. Sonnet builds persistent market intelligence
+that the trading Sonnet uses to make informed decisions every cycle.
 """
 
 import json
@@ -146,7 +146,7 @@ def run_nightly_update():
     an updated MID that Claude Sonnet sees every cycle tomorrow.
     """
     config = load_config()
-    haiku_model = config.get("haiku_model", "claude-haiku-4-5-20251001")
+    analyst_model = config.get("analyst_model", config.get("anthropic_model", "claude-sonnet-4-20250514"))
 
     # Load current MID
     current_mid = load_mid()
@@ -220,7 +220,7 @@ Update the Market Intelligence Document based on all of the above. Return ONLY v
             user=user_prompt,
             max_tokens=1500,
             config=config,
-            model=haiku_model,
+            model=analyst_model,
         )
 
         # Parse JSON response — strip code fences and any preamble
@@ -274,7 +274,7 @@ def run_pre_market():
     briefing with thesis status and trading scenarios.
     """
     config = load_config()
-    haiku_model = config.get("haiku_model", "claude-haiku-4-5-20251001")
+    analyst_model = config.get("analyst_model", config.get("anthropic_model", "claude-sonnet-4-20250514"))
     ticker = config["ticker"]
 
     # Load current MID
@@ -324,7 +324,7 @@ Produce the daily briefing. Return ONLY valid JSON."""
             user=user_prompt,
             max_tokens=600,
             config=config,
-            model=haiku_model,
+            model=analyst_model,
         )
 
         clean = raw.strip()

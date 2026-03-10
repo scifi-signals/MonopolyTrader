@@ -17,6 +17,7 @@
     "cooldown_minutes": 15
   },
   "anthropic_model": "claude-sonnet-4-20250514",
+  "analyst_model": "claude-sonnet-4-20250514",
   "haiku_model": "claude-haiku-4-5-20251001",
   "brave_search": {
     "enabled": false,

@@ -13,6 +13,7 @@ from .journal import get_recent_entries, format_journal_for_brief
 from .news_feed import NewsFeed, format_news_for_prompt
 from .web_search import format_search_results
 from .events import format_events_for_brief
+from .thesis_builder import format_playbook_for_brief
 
 logger = setup_logging("agent")
 
@@ -43,7 +44,9 @@ EVERY SCENARIO IS AN OPPORTUNITY:
 
 Paper money means you can be WRONG and learn from it. A trade that loses $30 but teaches you something is worth more than sitting in cash for a week learning nothing.
 
-TRADE JOURNAL: Your last 10 trades and their lessons appear below. These are YOUR lessons from YOUR experience. Use them. If you lost money buying into high RSI, don't do it again. If you made money buying VIX spikes, look for that setup.
+YOUR PLAYBOOK: Below you'll see statistical performance data from your past trades, broken down by market conditions (RSI zone, VIX level, trend, etc.). These are YOUR stats from YOUR trades. If a setup shows <40% win rate, think twice before repeating it. If a setup shows >55% win rate, look for that pattern.
+
+TRADE JOURNAL: Your last 5 trades appear below for recent context.
 
 Respond ONLY with valid JSON:
 {
@@ -190,9 +193,19 @@ def build_market_brief(
     elif h.get("shares", 0) > 0:
         parts.append(f"Can SELL up to {h['shares']:.4f} shares")
 
+    # === Playbook (learning stats) ===
+    parts.append("")
+    parts.append("=== YOUR PLAYBOOK ===")
+    try:
+        from .utils import load_json, DATA_DIR
+        ledger = load_json(DATA_DIR / "thesis_ledger.json", default={})
+        parts.append(format_playbook_for_brief(ledger))
+    except Exception:
+        parts.append("Playbook not yet available.")
+
     # === Trade Journal ===
     parts.append("")
-    parts.append("=== YOUR TRADE JOURNAL (last 10) ===")
+    parts.append("=== YOUR TRADE JOURNAL (last 5) ===")
     parts.append(format_journal_for_brief(journal_entries))
 
     return "\n".join(parts)

@@ -28,6 +28,7 @@ from .agent import make_decision
 from .news_feed import fetch_news_feed
 from .web_search import search_tsla_news
 from .events import get_upcoming_events
+from .tags import compute_tags
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
@@ -114,7 +115,7 @@ def run_cycle():
 
         # 3. Get journal entries
         journal_entries = get_recent_entries(
-            config.get("journal", {}).get("max_entries_in_brief", 10)
+            config.get("journal", {}).get("max_entries_in_brief", 5)
         )
 
         # 4. Check cooldown
@@ -160,6 +161,16 @@ def run_cycle():
                 if spy_data:
                     market_snapshot += f", SPY {spy_data.get('change_pct', 0):+.2f}%"
 
+                # Compute tags for thesis ledger
+                trade_tags = compute_tags(
+                    market_data=market_data,
+                    world=world,
+                    portfolio=portfolio,
+                    config=config,
+                    events=events,
+                    action=action,
+                )
+
                 # Record in journal
                 journal_add_entry(
                     trade_id=txn["id"],
@@ -171,6 +182,7 @@ def run_cycle():
                     confidence=decision.get("confidence", 0),
                     portfolio_value=result["portfolio"]["total_value"],
                     market_snapshot=market_snapshot,
+                    tags=trade_tags,
                 )
 
                 # If this was a SELL, close the corresponding BUY journal entry
@@ -235,11 +247,22 @@ def _update_dashboard(market_data: dict, portfolio: dict):
 
 
 def run_daily_tasks():
-    """Run after market close: snapshot."""
+    """Run after market close: snapshot + thesis ledger rebuild."""
     try:
         save_snapshot()
     except Exception as e:
         logger.warning(f"Daily tasks failed: {e}")
+
+    # Rebuild thesis ledger from all trades
+    try:
+        from .thesis_builder import build_ledger
+        ledger = build_ledger()
+        logger.info(
+            f"Thesis ledger rebuilt: {ledger.get('active_trades', 0)} active trades, "
+            f"{len(ledger.get('theses', {}))} theses"
+        )
+    except Exception as e:
+        logger.warning(f"Thesis ledger build failed: {e}")
 
     try:
         from .reporter import generate_dashboard_data

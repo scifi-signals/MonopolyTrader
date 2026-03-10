@@ -37,24 +37,44 @@ Every 15 minutes during market hours:
 src/
 ├── main.py          — 6-step cycle orchestrator
 ├── agent.py         — SYSTEM_PROMPT + build_market_brief() + make_decision()
+├── tags.py          — Mechanical trade tagging (8 objective market condition tags)
+├── thesis_builder.py — Nightly aggregation of tags into statistical playbook
 ├── market_data.py   — yfinance prices, indicators, regime, get_world_snapshot()
 ├── portfolio.py     — 2-rule validation, execute_trade(), cooldown
-├── journal.py       — Trade journal, Haiku lesson generation on close
+├── journal.py       — Trade journal with tags, Haiku lesson generation on close
 ├── events.py        — FOMC/CPI/NFP calendar + TSLA earnings from yfinance
 ├── news_feed.py     — yfinance + RSS news
-├── web_search.py    — Brave Search API (free tier, 2000 queries/month)
-├── reporter.py      — Dashboard data generation
+├── web_search.py    — Web search (disabled, was Brave Search)
+├── reporter.py      — Dashboard data generation (includes playbook + learning metrics)
 ├── observability.py — Anomaly detection, decision tracing, health checks
 └── utils.py         — Config, logging, AI call helpers, time utils
 
+tests/
+└── test_thesis.py   — Tests for tags, aggregation, validation, playbook formatting
+
 config.json          — ~40 lines. Ticker, risk params, model names, world tickers
 data/
-├── portfolio.json   — Current portfolio state
+├── portfolio.json    — Current portfolio state
 ├── transactions.json — Full trade history
-├── trade_journal.json — Journal entries with lessons
-├── snapshots/        — Daily portfolio snapshots
-└── latest_cycle.json — Last decision for dashboard
+├── trade_journal.json — Journal entries with tags and lessons
+├── thesis_ledger.json — Aggregated playbook stats (rebuilt nightly)
+├── snapshots/         — Daily portfolio snapshots
+└── latest_cycle.json  — Last decision for dashboard
 ```
+
+## Learning System: Thesis Ledger
+
+Every trade is mechanically tagged with 8 market conditions at execution:
+- **rsi_zone**: oversold / neutral / overbought
+- **trend**: above_sma50 / below_sma50
+- **volatility**: low_vix / normal_vix / high_vix
+- **regime**: trending / range_bound
+- **macd**: bullish_cross / bearish_cross / neutral
+- **market_context**: spy_up / spy_down / spy_flat
+- **position_state**: opening_new / adding_to_winner / adding_to_loser / taking_profit / cutting_loss
+- **event_proximity**: pre_event_24h / pre_event_72h / no_event
+
+Nightly, `thesis_builder.py` aggregates all closed trades into single-tag stats (win rate, avg P&L). Claude sees its "playbook" every cycle — what setups work, what to avoid, whether its confidence is calibrated. Time-decay weights recent trades more heavily (30/60/90 day windows).
 
 ## What Claude Sees Each Cycle (the "brief")
 
@@ -65,9 +85,9 @@ data/
 - **Regime**: Trend direction, directional strength, volatility level
 - **News**: yfinance + RSS headlines
 - **Upcoming events**: FOMC, CPI, NFP within 72h + TSLA earnings date
-- **Web search**: Brave Search results (last 24h)
+- **Playbook**: Statistical performance by market condition (best/worst setups, confidence calibration)
 - **Portfolio**: Cash, total value, P&L, position details, max BUY/SELL limits
-- **Trade journal**: Last 10 trades with lessons learned
+- **Trade journal**: Last 5 trades with lessons learned
 
 ## Key Commands
 

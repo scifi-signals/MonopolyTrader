@@ -18,6 +18,7 @@ from .portfolio import (
     SNAPSHOTS_DIR
 )
 from .journal import load_journal, get_journal_stats
+from .thesis_builder import get_learning_metrics
 
 logger = setup_logging("reporter")
 
@@ -81,6 +82,15 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Performance analytics
     performance_analytics = _build_performance_analytics(snapshots)
 
+    # Thesis ledger / playbook
+    thesis_ledger = load_json(DATA_DIR / "thesis_ledger.json", default={})
+    learning_metrics = {}
+    try:
+        if thesis_ledger:
+            learning_metrics = get_learning_metrics(thesis_ledger)
+    except Exception as e:
+        logger.warning(f"Learning metrics failed: {e}")
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -92,6 +102,8 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "benchmark": benchmark,
         "trade_journal": journal_entries,
         "journal_stats": journal_stats,
+        "thesis_ledger": thesis_ledger,
+        "learning_metrics": learning_metrics,
         "health": health,
         "active_alerts": active_alerts,
         "performance_analytics": performance_analytics,

@@ -31,7 +31,7 @@
     "ev_peers": ["RIVN", "LCID", "NIO", "LI", "XPEV"]
   },
   "journal": {
-    "max_entries_in_brief": 10,
+    "max_entries_in_brief": 5,
     "lesson_max_words": 50
   },
   "news_feed": {

@@ -36,6 +36,7 @@ def add_entry(
     confidence: float,
     portfolio_value: float,
     market_snapshot: str,
+    tags: dict | None = None,
 ) -> dict:
     """Record a new trade in the journal. Called immediately after a trade executes."""
     entries = load_journal()
@@ -52,6 +53,7 @@ def add_entry(
         "confidence": round(confidence, 2),
         "portfolio_value": round(portfolio_value, 2),
         "market_snapshot": market_snapshot[:200],
+        "tags": tags,
         "lesson": None,
         "close_trade_id": None,
         "close_price": None,

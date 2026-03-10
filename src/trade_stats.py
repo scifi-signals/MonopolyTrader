@@ -345,9 +345,24 @@ def apply_statistical_constraints(
 
     Returns (modified_max_shares, list_of_constraints_applied).
     Multiple constraints can stack multiplicatively.
+
+    Strategy-regime awareness: if the dominant strategy is designed for
+    the current regime (e.g. range_trader in sideways/range_bound),
+    regime constraints are skipped — the bad aggregate hit rate comes
+    from OTHER strategies failing in that regime, not this one.
     """
     if not constraints:
         return max_shares, []
+
+    # Strategies that are designed for specific regimes — don't penalize
+    # them for the aggregate regime hit rate
+    REGIME_NATIVE_STRATEGIES = {
+        "range_trader": {"regime_trend": "sideways", "regime_directional": "range_bound"},
+        "momentum": {"regime_trend": "bull"},
+        "mean_reversion": {"regime_volatility": "high"},
+    }
+    dominant_strategy = trade_context.get("dominant_strategy", "")
+    native_regimes = REGIME_NATIVE_STRATEGIES.get(dominant_strategy, {})
 
     applied = []
     modified = max_shares
@@ -366,6 +381,17 @@ def apply_statistical_constraints(
             if str(actual_value).lower() != str(required_value).lower():
                 matches = False
                 break
+
+        # Skip regime constraints when the dominant strategy is native to this regime
+        if matches and native_regimes:
+            for dim, required_value in condition.items():
+                if dim in native_regimes and native_regimes[dim] == str(required_value).lower():
+                    logger.info(
+                        f"CONSTRAINT SKIPPED (regime-native): {constraint.get('reason', '')} "
+                        f"— {dominant_strategy} is designed for {dim}={required_value}"
+                    )
+                    matches = False
+                    break
 
         if matches:
             modifier = constraint.get("modifier", 1.0)

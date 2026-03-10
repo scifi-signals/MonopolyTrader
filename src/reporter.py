@@ -1,4 +1,8 @@
-"""Dashboard reporter — generates JSON data and HTML dashboard."""
+"""Dashboard reporter — generates JSON data for the dashboard.
+
+v4: Simplified. Removed knowledge_base, strategies, thesis, trade_stats,
+    ensemble, prediction tracking. Added trade journal display.
+"""
 
 import math
 from datetime import datetime
@@ -7,18 +11,13 @@ from pathlib import Path
 from .utils import (
     load_config, load_json, save_json, iso_now, format_currency,
     is_market_open, now_et, DATA_DIR, DASHBOARD_DIR, setup_logging,
-    get_cost_summary,
 )
 from .market_data import get_current_price, get_price_history
 from .portfolio import (
     load_portfolio, load_transactions, get_portfolio_summary,
     SNAPSHOTS_DIR
 )
-from .knowledge_base import (
-    get_lessons, get_patterns, get_predictions, get_strategy_scores,
-    get_journal, get_prediction_accuracy, get_knowledge_summary,
-    get_tsla_profile,
-)
+from .journal import load_journal, get_journal_stats
 
 logger = setup_logging("reporter")
 
@@ -30,8 +29,6 @@ def generate_dashboard_data(full: bool = False) -> dict:
 
     Args:
         full: If True, recalculates benchmark from scratch (slow — yfinance fetch).
-              If False, reuses cached benchmark from existing data.json.
-              Use full=True for daily research cycle, False for intra-day refreshes.
     """
     config = load_config()
     ticker = config["ticker"]
@@ -51,7 +48,7 @@ def generate_dashboard_data(full: bool = False) -> dict:
     # Snapshots for portfolio value chart
     snapshots = _load_all_snapshots()
 
-    # Benchmark (buy-and-hold) — cache for intra-day refreshes
+    # Benchmark (buy-and-hold)
     if full:
         benchmark = _calculate_benchmark(ticker, snapshots)
     else:
@@ -60,62 +57,14 @@ def generate_dashboard_data(full: bool = False) -> dict:
         if not benchmark:
             benchmark = _calculate_benchmark(ticker, snapshots)
 
-    # Knowledge
-    lessons = get_lessons()
-    patterns = get_patterns()
-    predictions = get_predictions()
-    scores = get_strategy_scores()
-    accuracy = get_prediction_accuracy()
-    journal = get_journal()
-    profile = get_tsla_profile()
+    # Trade journal
+    journal_entries = load_journal()
+    journal_stats = get_journal_stats()
 
-    # Strategy weight history from rebalance records
-    weight_history = _build_weight_history(scores)
+    # Latest decision cycle for Agent's Mind card
+    latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default=None)
 
-    # Prediction scoreboard
-    scoreboard = _build_scoreboard(predictions)
-
-    # Benchmarks comparison + graduation
-    benchmarks_comparison = {}
-    graduation_criteria = {}
-    verdict = "too_early"
-    try:
-        from .benchmarks import BenchmarkTracker
-        bt = BenchmarkTracker()
-        benchmarks_comparison = bt.get_comparison(summary["total_value"])
-
-        # Build agent metrics for graduation check
-        agent_metrics = {
-            "trading_days": len(snapshots),
-            "total_trades": summary.get("total_trades", 0),
-            "percentile_vs_random": benchmarks_comparison.get("percentile_vs_random", 0),
-            "sharpe_ratio": 0,  # TODO: calculate from snapshots
-            "max_drawdown_pct": 0,  # TODO: calculate from snapshots
-            "prediction_accuracy_pct": 0,
-            "beats_buy_hold_tsla": benchmarks_comparison.get("beats_buy_hold_tsla", False),
-            "beats_buy_hold_spy": benchmarks_comparison.get("beats_buy_hold_spy", False),
-            "beats_dca": benchmarks_comparison.get("beats_dca", False),
-            "beats_random_median": benchmarks_comparison.get("beats_random_median", False),
-            "regime_count": 0,
-            "total_return_pct": summary.get("total_pnl_pct", 0),
-        }
-        # Prediction accuracy
-        if accuracy.get("direction_accuracy"):
-            accs = [v["accuracy_pct"] for v in accuracy["direction_accuracy"].values()]
-            agent_metrics["prediction_accuracy_pct"] = sum(accs) / len(accs) if accs else 0
-
-        graduation_result = bt.check_graduation_criteria(agent_metrics)
-        graduation_criteria = graduation_result
-        verdict = bt.calculate_verdict(benchmarks_comparison, graduation_result)
-    except Exception as e:
-        logger.warning(f"Benchmark comparison failed: {e}")
-
-    # Performance analytics (diagnostic charts)
-    performance_analytics = _build_performance_analytics(
-        snapshots, predictions, benchmarks_comparison
-    )
-
-    # Health & alerts
+    # Health & alerts (optional — observability module may reference old imports)
     health = {}
     active_alerts = []
     try:
@@ -129,41 +78,8 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception:
         pass
 
-    # Milestones
-    milestones = load_json(DATA_DIR / "milestones.json", default=[])
-
-    # API costs
-    cost_summary = {}
-    try:
-        cost_summary = get_cost_summary(days=30)
-    except Exception as e:
-        logger.warning(f"Cost summary failed: {e}")
-
-    # Hold log summary with counterfactual stats
-    hold_log = load_json(DATA_DIR / "hold_log.json", default=[])
-    cf_stats = _calculate_counterfactual_stats(hold_log)
-    hold_summary = {
-        "total_holds": len(hold_log),
-        "recent": hold_log[-10:] if hold_log else [],
-        "counterfactual_stats": cf_stats,
-    }
-
-    # Ensemble data
-    ensemble_data = {}
-    try:
-        from .ensemble import list_agents, get_ensemble_summary
-        agents = list_agents()
-        if agents:
-            ensemble_data = {
-                "agents": get_ensemble_summary(),
-                "leaderboard": load_json(DATA_DIR / "ensemble" / "leaderboard.json", default={}),
-                "harmony": load_json(DATA_DIR / "ensemble" / "harmony_analysis.json", default={}),
-            }
-    except Exception as e:
-        logger.warning(f"Ensemble data load failed: {e}")
-
-    # Latest decision cycle for Agent's Mind card
-    latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default=None)
+    # Performance analytics
+    performance_analytics = _build_performance_analytics(snapshots)
 
     data = {
         "generated_at": iso_now(),
@@ -174,30 +90,15 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "transactions": transactions,
         "snapshots": snapshots,
         "benchmark": benchmark,
-        "benchmarks_comparison": benchmarks_comparison,
-        "graduation_criteria": graduation_criteria,
-        "verdict": verdict,
+        "trade_journal": journal_entries,
+        "journal_stats": journal_stats,
         "health": health,
         "active_alerts": active_alerts,
-        "milestones": milestones,
-        "hold_log_summary": hold_summary,
-        "lessons": lessons,
-        "patterns": patterns,
-        "predictions": scoreboard,
-        "prediction_accuracy": accuracy,
-        "strategy_scores": scores,
-        "weight_history": weight_history,
-        "journal": journal,
-        "tsla_profile": profile,
-        "knowledge_summary": get_knowledge_summary(),
+        "performance_analytics": performance_analytics,
         "market_open": is_market_open(),
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),
-        "ensemble": ensemble_data,
-        "api_costs": cost_summary,
-        "performance_analytics": performance_analytics,
         "config": {
             "starting_balance": config["starting_balance"],
-            "strategies_enabled": config["strategies_enabled"],
             "risk_params": config["risk_params"],
         },
     }
@@ -248,7 +149,6 @@ def _calculate_benchmark(ticker: str, snapshots: list) -> list:
                     "value": round(shares_buyhold * close, 2),
                 })
             else:
-                # Use last known value
                 if benchmark:
                     benchmark.append({"date": date, "value": benchmark[-1]["value"]})
 
@@ -258,65 +158,10 @@ def _calculate_benchmark(ticker: str, snapshots: list) -> list:
         return []
 
 
-def _build_weight_history(scores: dict) -> list:
-    """Build strategy weight history from rebalance events."""
-    history = []
-    strategies = scores.get("strategies", {})
-    rebalances = scores.get("rebalance_history", [])
-
-    # Start with initial weights
-    initial = {name: s.get("initial_weight", 0.2) for name, s in strategies.items()}
-    if rebalances:
-        history.append({"timestamp": rebalances[0].get("timestamp", ""), "weights": dict(initial)})
-        current = dict(initial)
-        for r in rebalances:
-            for name, change in r.get("changes", {}).items():
-                current[name] = round(current.get(name, 0.2) + change, 4)
-            history.append({"timestamp": r["timestamp"], "weights": dict(current)})
-    else:
-        history.append({"timestamp": iso_now(), "weights": initial})
-
-    # Add current weights
-    current_weights = {name: s["weight"] for name, s in strategies.items()}
-    history.append({"timestamp": iso_now(), "weights": current_weights})
-
-    return history
-
-
-def _calculate_counterfactual_stats(hold_log: list) -> dict:
-    """Calculate aggregate stats on HOLD counterfactual outcomes."""
-    scored = [h for h in hold_log if h.get("counterfactual_scored")]
-    if not scored:
-        return {"total_scored": 0}
-
-    correct_holds = 0
-    missed_gains = 0
-    total_missed_pnl = 0.0
-
-    for h in scored:
-        cf = h.get("counterfactual_outcome", {})
-        if not isinstance(cf, dict):
-            continue
-        verdict = cf.get("verdict", "")
-        if verdict == "correct_hold":
-            correct_holds += 1
-        elif verdict == "missed_gain":
-            missed_gains += 1
-            total_missed_pnl += abs(cf.get("hypothetical_pnl", 0))
-
-    return {
-        "total_scored": len(scored),
-        "correct_holds": correct_holds,
-        "missed_gains": missed_gains,
-        "total_missed_pnl": round(total_missed_pnl, 2),
-        "correct_hold_pct": round(correct_holds / len(scored) * 100, 1) if scored else 0,
-    }
-
-
-def _build_performance_analytics(snapshots: list, predictions: list, benchmarks_comparison: dict) -> dict:
+def _build_performance_analytics(snapshots: list) -> dict:
     """Compute diagnostic analytics for the dashboard charts."""
 
-    # --- Drawdown series ---
+    # Drawdown series
     drawdown_series = []
     peak = 0.0
     for snap in snapshots:
@@ -330,10 +175,9 @@ def _build_performance_analytics(snapshots: list, predictions: list, benchmarks_
             "peak": round(peak, 2),
         })
 
-    # --- Rolling Sharpe (20-day window, annualized) ---
+    # Rolling Sharpe (20-day window, annualized)
     rolling_sharpe = []
     if len(snapshots) >= 2:
-        # Compute daily returns
         values = [s.get("total_value", 0) for s in snapshots]
         daily_returns = []
         for i in range(1, len(values)):
@@ -349,265 +193,12 @@ def _build_performance_analytics(snapshots: list, predictions: list, benchmarks_
             var_r = sum((r - mean_r) ** 2 for r in w) / len(w)
             std_r = math.sqrt(var_r) if var_r > 0 else 0
             sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
-            # i in daily_returns corresponds to snapshots[i+1]
             rolling_sharpe.append({
                 "date": snapshots[i + 1].get("date", ""),
                 "sharpe": round(sharpe, 2),
             })
 
-    # --- Prediction accuracy trend (rolling window of 10 scored predictions) ---
-    accuracy_trend = []
-    scored = []
-    for p in predictions:
-        outcomes = p.get("outcomes", {})
-        has_score = False
-        for h in ["30min", "2hr", "1day"]:
-            o = outcomes.get(h)
-            if o and o.get("direction_correct") is not None:
-                has_score = True
-                break
-        if has_score:
-            scored.append(p)
-
-    trend_window = 10
-    for i in range(len(scored)):
-        window_preds = scored[max(0, i - trend_window + 1) : i + 1]
-        point = {
-            "timestamp": scored[i].get("timestamp", ""),
-            "window": len(window_preds),
-        }
-        for h in ["30min", "2hr", "1day"]:
-            correct = 0
-            total = 0
-            for wp in window_preds:
-                o = wp.get("outcomes", {}).get(h)
-                if o and o.get("direction_correct") is not None:
-                    total += 1
-                    if o["direction_correct"]:
-                        correct += 1
-            key = f"accuracy_{h}"
-            point[key] = round(correct / total * 100, 1) if total > 0 else None
-        accuracy_trend.append(point)
-
-    # --- Random trader results ---
-    random_results = []
-    agent_value = 0.0
-    try:
-        from .benchmarks import BenchmarkTracker
-        bt = BenchmarkTracker()
-        random_results = bt.data.get("random_traders", {}).get("results", [])
-    except Exception:
-        pass
-    if benchmarks_comparison.get("agent"):
-        agent_value = benchmarks_comparison["agent"].get("value", 0)
-    elif snapshots:
-        agent_value = snapshots[-1].get("total_value", 0)
-
     return {
         "drawdown_series": drawdown_series,
         "rolling_sharpe": rolling_sharpe,
-        "prediction_accuracy_trend": accuracy_trend,
-        "random_trader_results": random_results,
-        "agent_value": round(agent_value, 2),
     }
-
-
-def _build_scoreboard(predictions: list) -> list:
-    """Build prediction scoreboard with outcomes."""
-    scoreboard = []
-    for p in predictions:
-        entry = {
-            "id": p["id"],
-            "timestamp": p["timestamp"],
-            "price_at_prediction": p.get("price_at_prediction", 0),
-            "predictions": p.get("predictions", {}),
-            "outcomes": p.get("outcomes", {}),
-            "reasoning": p.get("reasoning", "")[:150],
-        }
-        # Score summary
-        correct = 0
-        total = 0
-        for horizon, outcome in entry["outcomes"].items():
-            if outcome and outcome.get("direction_correct") is not None:
-                total += 1
-                if outcome["direction_correct"]:
-                    correct += 1
-        entry["score"] = f"{correct}/{total}" if total > 0 else "pending"
-        scoreboard.append(entry)
-    return scoreboard
-
-
-def generate_daily_report() -> str:
-    """Generate a daily owner report summarizing the day's trading activity.
-
-    Returns a formatted text report and saves it to data/daily_reports/.
-    """
-    from datetime import datetime, timezone, timedelta
-    import numpy as np
-
-    config = load_config()
-    ticker = config["ticker"]
-    summary = get_portfolio_summary()
-    transactions = load_transactions()
-
-    # Today's date
-    today = now_et().strftime("%Y-%m-%d")
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0)
-
-    # Today's trades
-    todays_trades = []
-    for t in transactions:
-        try:
-            ts = datetime.fromisoformat(t["timestamp"])
-            if ts >= today_start:
-                todays_trades.append(t)
-        except (ValueError, TypeError):
-            continue
-
-    # Today's realized P&L
-    today_pnl = sum(t.get("realized_pnl", 0) or 0 for t in todays_trades if t["action"] == "SELL")
-    today_buys = [t for t in todays_trades if t["action"] == "BUY"]
-    today_sells = [t for t in todays_trades if t["action"] == "SELL"]
-
-    # Strategy scores
-    scores = get_strategy_scores()
-    strategies = scores.get("strategies", {})
-
-    # Prediction accuracy
-    pred_acc = get_prediction_accuracy()
-
-    # Current thesis
-    from .thesis import load_thesis
-    thesis = load_thesis()
-
-    # Regime from latest cycle
-    latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default={})
-    regime = latest_cycle.get("regime", {})
-
-    # Snapshots for drawdown
-    snapshot_files = sorted(SNAPSHOTS_DIR.glob("*.json"))
-    max_drawdown = 0.0
-    peak_value = config["starting_balance"]
-    if snapshot_files:
-        values = []
-        for sf in snapshot_files:
-            snap = load_json(sf, default={})
-            values.append(snap.get("total_value", 1000))
-        if values:
-            vals = np.array(values, dtype=float)
-            peak = np.maximum.accumulate(vals)
-            drawdowns = (peak - vals) / peak
-            max_drawdown = float(np.max(drawdowns) * 100)
-            peak_value = float(np.max(vals))
-
-    # Build report
-    lines = [
-        f"{'='*60}",
-        f"MONOPOLYTRADER DAILY REPORT — {today}",
-        f"{'='*60}",
-        "",
-        f"Portfolio Value:  {format_currency(summary['total_value'])}",
-        f"Total P&L:       {format_currency(summary['total_pnl'])} ({summary['total_pnl_pct']:+.2f}%)",
-        f"Cash:            {format_currency(summary['cash'])}",
-        f"Peak Value:      {format_currency(peak_value)}",
-        f"Max Drawdown:    {max_drawdown:.1f}%",
-        "",
-        f"--- Today's Activity ---",
-        f"Trades: {len(todays_trades)} ({len(today_buys)} buys, {len(today_sells)} sells)",
-        f"Realized P&L:    {format_currency(today_pnl)}" if today_pnl != 0 else "Realized P&L:    $0.00",
-    ]
-
-    for t in todays_trades:
-        pnl_str = f" P&L={format_currency(t.get('realized_pnl', 0))}" if t["action"] == "SELL" else ""
-        lines.append(
-            f"  {t['action']} {t['shares']:.4f} @ ${t['price']:.2f} "
-            f"({t.get('strategy', '?')}, conf={t.get('confidence', 0):.2f}){pnl_str}"
-        )
-
-    if not todays_trades:
-        lines.append("  No trades today.")
-
-    # Holdings
-    holdings = summary.get("holdings", {})
-    h = holdings.get(ticker, {})
-    if h.get("shares", 0) > 0:
-        lines.extend([
-            "",
-            f"--- Position ---",
-            f"{ticker}: {h['shares']:.4f} shares @ ${h['avg_cost_basis']:.2f} avg",
-            f"Unrealized P&L: {format_currency(h.get('unrealized_pnl', 0))}",
-        ])
-    else:
-        lines.extend(["", "--- Position ---", "All cash (no position)."])
-
-    # Thesis
-    if thesis and thesis.narrative:
-        lines.extend([
-            "",
-            f"--- Thesis (v{thesis.version}) ---",
-            f"Direction: {thesis.direction} (conviction {thesis.conviction:.2f})",
-            f"Narrative: {thesis.narrative[:120]}...",
-        ])
-
-    # Regime
-    if regime:
-        lines.extend([
-            "",
-            f"--- Regime ---",
-            f"Trend: {regime.get('trend', '?')} | Volatility: {regime.get('volatility', '?')} | VIX: {regime.get('vix', '?')}",
-        ])
-
-    # Strategy weights
-    if strategies:
-        lines.extend(["", "--- Strategy Weights ---"])
-        for name, data in sorted(strategies.items(), key=lambda x: x[1].get("weight", 0), reverse=True):
-            w = data.get("weight", 0)
-            wr = data.get("win_rate", 0)
-            lines.append(f"  {name:20s} weight={w:.2f}  win_rate={wr:.0f}%")
-
-    # Cumulative stats
-    lines.extend([
-        "",
-        f"--- Cumulative ---",
-        f"Total Trades:    {summary['total_trades']}",
-        f"Win Rate:        {summary['win_rate']}%",
-        f"Trading Days:    {len(snapshot_files)}",
-    ])
-
-    # Prediction accuracy
-    dir_acc = pred_acc.get("direction_accuracy", {})
-    if dir_acc:
-        lines.append("")
-        lines.append("--- Prediction Accuracy ---")
-        for horizon, data in dir_acc.items():
-            if data.get("total", 0) > 0:
-                lines.append(f"  {horizon}: {data['accuracy_pct']}% ({data['total']} predictions)")
-
-    lines.extend(["", f"{'='*60}"])
-
-    report = "\n".join(lines)
-
-    # Save to file
-    report_dir = DATA_DIR / "daily_reports"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"{today}.txt"
-    report_path.write_text(report)
-
-    # Also save as JSON for dashboard
-    report_json = {
-        "date": today,
-        "portfolio_value": summary["total_value"],
-        "total_pnl": summary["total_pnl"],
-        "total_pnl_pct": summary["total_pnl_pct"],
-        "today_trades": len(todays_trades),
-        "today_pnl": round(today_pnl, 2),
-        "max_drawdown_pct": round(max_drawdown, 1),
-        "win_rate": summary["win_rate"],
-        "trading_days": len(snapshot_files),
-        "thesis_direction": thesis.direction if thesis else "unknown",
-        "thesis_conviction": thesis.conviction if thesis else 0,
-    }
-    save_json(report_dir / f"{today}.json", report_json)
-
-    logger.info(f"Daily report saved: {report_path}")
-    return report

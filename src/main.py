@@ -1,52 +1,41 @@
-"""MonopolyTrader — main entry point with scheduler and orchestration."""
+"""MonopolyTrader v4 — main entry point.
+
+Every 15 minutes during market hours:
+  1. Gather data (TSLA + world + news + web search)
+  2. Build brief (raw data + portfolio + journal)
+  3. Claude decides (BUY / SELL / HOLD)
+  4. Execute trade if any
+  5. Record in journal
+  6. Update dashboard
+"""
 
 import argparse
-import asyncio
 import signal
 import sys
 import time
 import schedule
-from datetime import datetime
 
 from .utils import (
     load_config, is_market_open, now_et, iso_now,
-    format_currency, format_pct, setup_logging, DATA_DIR,
-    load_json, save_json,
+    format_currency, setup_logging, DATA_DIR, save_json,
 )
-from .market_data import (
-    get_current_price, get_market_summary, check_macro_gate, classify_regime,
-    check_volume_spike, check_vix_change,
-)
+from .market_data import get_market_summary, get_world_snapshot
 from .portfolio import (
     load_portfolio, execute_trade, save_portfolio, save_snapshot,
-    check_stop_losses, check_daily_loss_limit, check_cooldown,
-    check_end_of_day_close,
-    update_market_price, get_portfolio_summary, calculate_position_size,
-    apply_gap_risk_reduction,
+    update_market_price, get_portfolio_summary, check_cooldown,
 )
-from .strategies import evaluate_all_strategies, aggregate_signals, calculate_signal_balance
-from .agent import make_decision, make_decision_multi_step, run_analyst, run_trader
-from .knowledge_base import (
-    initialize as init_kb, get_strategy_scores, get_relevant_knowledge,
-    get_knowledge_summary, get_lessons_for_analyst, get_prediction_accuracy,
-)
-from .learner import (
-    review_trade, review_predictions, discover_patterns,
-    evolve_strategy_weights, write_journal_entry, run_learning_cycle,
-    review_hold_outcomes,
-)
-from .researcher import run_full_research
+from .agent import make_decision
 from .news_feed import fetch_news_feed
-from .thesis import load_thesis, save_thesis, create_initial_thesis, thesis_changed_meaningfully
-from .trade_stats import (
-    compute_and_save_trade_stats, generate_and_save_constraints,
-    load_trade_stats, load_constraints, format_stats_for_prompt,
-    apply_statistical_constraints,
+from .web_search import search_tsla_news
+from .journal import (
+    add_entry as journal_add_entry,
+    close_entry as journal_close_entry,
+    get_recent_entries,
+    load_journal,
 )
 
 logger = setup_logging("main")
 
-# Global flag for clean shutdown
 _running = True
 
 
@@ -60,591 +49,85 @@ signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
 
-# --- v2 Event-Driven Trigger System ---
-
-# Track last trigger evaluation for hourly minimum check
-_last_analyst_call = None
-_last_hourly_check = None
-
-
-def evaluate_triggers(
-    news_feed,
-    thesis,
-    current_price: float,
-    market_data: dict,
-    config: dict,
-) -> list[dict]:
-    """Evaluate all trigger conditions. Returns list of triggered events.
-
-    If no triggers fire, the cycle skips the Claude call entirely.
-    """
-    global _last_hourly_check
-    from datetime import datetime, timezone
-
-    triggers = []
-    trigger_config = config.get("event_triggers", {})
-    now = datetime.now(timezone.utc)
-
-    # 1. High-impact news (only NEW items trigger — not previously seen ones)
-    news_threshold = trigger_config.get("news_relevance_threshold", 0.7)
-    new_high_impact = [i for i in news_feed.items if i.relevance > news_threshold and i.is_new]
-    if new_high_impact:
-        triggers.append({
-            "type": "news_high_impact",
-            "detail": f"{len(new_high_impact)} new items above {news_threshold}",
-            "items": [i.title[:80] for i in new_high_impact[:3]],
-        })
-
-    # 2. Price level break (thesis support/resistance)
-    if thesis.narrative:  # Only if thesis is established
-        level_break = thesis.price_breaks_level(current_price)
-        if level_break:
-            triggers.append({
-                "type": "price_level_break",
-                "detail": f"{level_break['type']} at ${level_break['level']} (price=${current_price})",
-            })
-
-    # 3. Volume spike
-    try:
-        vol_threshold = trigger_config.get("volume_spike_threshold", 2.0)
-        vol_data = check_volume_spike(config["ticker"])
-        if vol_data["ratio"] >= vol_threshold:
-            triggers.append({
-                "type": "volume_spike",
-                "detail": f"Volume {vol_data['ratio']:.1f}x 20-day avg",
-            })
-    except Exception as e:
-        logger.debug(f"Volume spike check failed: {e}")
-
-    # 4. VIX spike
-    try:
-        vix_threshold = trigger_config.get("vix_change_threshold", 3.0)
-        vix_data = check_vix_change()
-        if abs(vix_data["change"]) >= vix_threshold:
-            triggers.append({
-                "type": "vix_spike",
-                "detail": f"VIX moved {vix_data['change']:+.1f} to {vix_data['current']:.1f}",
-            })
-    except Exception as e:
-        logger.debug(f"VIX change check failed: {e}")
-
-    # 5. Thesis stale
-    stale_hours = trigger_config.get("thesis_stale_hours", 4)
-    if thesis.is_stale(stale_hours):
-        triggers.append({
-            "type": "thesis_stale",
-            "detail": f"Thesis not updated in >{stale_hours}h",
-        })
-
-    # 6. Hourly minimum check (at least once per hour)
-    if _last_hourly_check is None or (now - _last_hourly_check).total_seconds() >= 3600:
-        if not triggers:  # Only add if no other trigger already fired
-            triggers.append({
-                "type": "hourly_check",
-                "detail": "Minimum hourly thesis/market check",
-            })
-        _last_hourly_check = now
-
-    return triggers
-
-
-def run_cycle_v2():
-    """v2 decision cycle — event-driven, thesis-first architecture.
-
-    Every 15 min:
-      1. Fetch market data + news feed           [always]
-      2. Update portfolio price, score predictions [always]
-      3. Check stop losses                        [always]
-      4. Evaluate triggers                        [NEW]
-      5. If no trigger → log, refresh dashboard, RETURN (no Claude call)
-      6. If trigger → run Analyst and/or Trader
-      7. Refresh dashboard
-    """
-    global _last_analyst_call
-    from datetime import datetime, timezone
-
-    config = load_config()
-    ticker = config["ticker"]
-
-    if not is_market_open(config):
-        return
-
-    if check_daily_loss_limit():
-        logger.warning("Daily loss limit reached — skipping cycle")
-        return
-
-    try:
-        # 1. Fetch market data + news
-        logger.info("--- v2 Decision Cycle ---")
-        market_data = get_market_summary(ticker)
-        current_price = market_data["current"]["price"]
-        regime = market_data.get("regime", {})
-        macro = market_data.get("macro", {})
-        atr = market_data.get("daily_indicators", {}).get("atr", 0) or 0
-        vix = regime.get("vix", 0)
-
-        logger.info(
-            f"{ticker}: ${current_price} "
-            f"({market_data['current'].get('change_pct', 0):+.2f}%) "
-            f"| Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')} "
-            f"| VIX: {vix:.1f}"
-        )
-
-        # Fetch news feed
-        news_feed = fetch_news_feed(ticker)
-
-        # 2. Update portfolio
-        portfolio = load_portfolio()
-        portfolio = update_market_price(portfolio, ticker, current_price)
-        save_portfolio(portfolio)
-
-        # 3. Check stop losses (always — safety first)
-        stop_signal = check_stop_losses(current_price, atr=atr, vix=vix)
-        if stop_signal:
-            logger.warning(f"STOP LOSS: selling {stop_signal['shares']:.4f} shares")
-            result = execute_trade(
-                "SELL", stop_signal["shares"], current_price,
-                {"strategy": "stop_loss", "confidence": 1.0,
-                 "hypothesis": stop_signal["reason"],
-                 "reasoning": "Automatic stop loss execution",
-                 "_vix": vix}
-            )
-            if result["status"] == "executed":
-                logger.info(f"Stop loss executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
-            return
-
-        # 3b. Check end-of-day position close (3:50 PM ET)
-        eod_signal = check_end_of_day_close(ticker, config)
-        if eod_signal:
-            result = execute_trade(
-                "SELL", eod_signal["shares"], current_price,
-                {"strategy": "eod_close", "confidence": 1.0,
-                 "hypothesis": eod_signal["reason"],
-                 "reasoning": "Automatic end-of-day position close to avoid overnight gap risk",
-                 "_vix": vix}
-            )
-            if result["status"] == "executed":
-                logger.info(f"EOD close executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
-                _log_hold_streak_reset(market_data)
-            _post_cycle_tasks(current_price, market_data, regime)
-            return
-
-        # 4. Evaluate triggers
-        thesis = load_thesis()
-        if not thesis.narrative:
-            thesis = create_initial_thesis()
-
-        triggers = evaluate_triggers(news_feed, thesis, current_price, market_data, config)
-
-        if not triggers:
-            logger.info("No triggers fired — skipping Claude call")
-            # Still score predictions and refresh dashboard
-            scored = review_predictions(current_price)
-            if scored:
-                logger.info(f"Scored {len(scored)} predictions")
-            try:
-                evaluate_hold_counterfactuals(current_price)
-            except Exception:
-                pass
-            try:
-                from .reporter import generate_dashboard_data
-                generate_dashboard_data()
-            except Exception:
-                pass
-            return
-
-        trigger_names = [t["type"] for t in triggers]
-        trigger_details = "; ".join(f"{t['type']}: {t['detail']}" for t in triggers)
-        logger.info(f"TRIGGERS FIRED: {trigger_details}")
-
-        # 5. Check macro gate
-        macro_gate = check_macro_gate(config)
-        if macro_gate["gate_active"]:
-            logger.warning(f"Macro gate: {macro_gate['reason']}")
-
-        # 6. Check earnings blackout
-        earnings_blocked = _check_earnings_blackout(ticker, config)
-
-        # 7. Check cooldown (ATR-scaled)
-        cooldown_ok = check_cooldown(ticker, atr=atr, current_price=current_price)
-
-        # 8. Run Analyst phase (update thesis)
-        now = datetime.now(timezone.utc)
-        needs_analyst = any(t["type"] in (
-            "news_high_impact", "price_level_break", "thesis_stale",
-            "vix_spike", "hourly_check",
-        ) for t in triggers)
-
-        old_thesis = thesis
-        if needs_analyst:
-            trigger_reason = trigger_details
-            # Connection 7: inject recent lessons into analyst prompt
-            lessons_text = get_lessons_for_analyst(since_hours=24, max_lessons=5)
-            thesis = run_analyst(
-                thesis, news_feed, market_data,
-                regime=regime, trigger_reason=trigger_reason,
-                lessons_text=lessons_text,
-            )
-            _last_analyst_call = now
-
-        # 9. Decide whether to run Trader
-        needs_trader = (
-            thesis_changed_meaningfully(old_thesis, thesis)
-            or any(t["type"] in ("price_level_break", "volume_spike") for t in triggers)
-            or (thesis.conviction >= 0.5 and "hourly_check" in trigger_names)
-        )
-
-        if not needs_trader:
-            logger.info("Analyst updated thesis but no trade trigger — skipping Trader")
-            _post_cycle_tasks(current_price, market_data, regime)
-            return
-
-        if not cooldown_ok:
-            logger.info("Trader would run but cooldown active — skipping")
-            _post_cycle_tasks(current_price, market_data, regime)
-            return
-
-        # 10. Run strategy signals (with thesis context)
-        scores = get_strategy_scores()
-        signals = evaluate_all_strategies(
-            market_data, portfolio, scores, regime=regime,
-            thesis_direction=thesis.direction,
-            thesis_conviction=thesis.conviction,
-        )
-        aggregate = aggregate_signals(signals)
-        logger.info(f"Aggregate signal: {aggregate.action} (conf={aggregate.confidence:.2f})")
-
-        # 11. Calculate position size
-        max_shares = calculate_position_size(
-            portfolio["total_value"], current_price, atr, vix, config
-        )
-        max_shares = apply_gap_risk_reduction(max_shares, config)
-
-        # 11b. Load statistical constraints and apply to position sizing (Connection 4)
-        constraints = load_constraints()
-
-        # 11c. Derive time_of_day_session from current ET time
-        et_now = now_et()
-        et_hour = et_now.hour + et_now.minute / 60
-        if et_hour < 10.5:
-            time_session = "OPENING_HOUR"
-        elif et_hour < 12.0:
-            time_session = "MORNING"
-        elif et_hour < 14.5:
-            time_session = "MIDDAY"
-        else:
-            time_session = "POWER_HOUR"
-
-        # 11d. Determine primary trigger and news catalyst
-        primary_trigger = trigger_names[0] if trigger_names else "unknown"
-        news_catalyst = ""
-        if news_feed and news_feed.items:
-            top_item = max(news_feed.items, key=lambda i: i.relevance, default=None)
-            if top_item:
-                news_catalyst = getattr(top_item, "catalyst_type", "") or ""
-
-        # Build trade_context for this cycle (Connection 1: context → transaction)
-        trade_context = {
-            "regime_trend": regime.get("trend", "unknown"),
-            "regime_directional": regime.get("directional", "unknown"),
-            "regime_volatility": regime.get("volatility", "unknown"),
-            "thesis_direction": thesis.direction,
-            "thesis_conviction": thesis.conviction,
-            "thesis_version": thesis.version,
-            "trigger_type": primary_trigger,
-            "time_of_day_session": time_session,
-            "news_catalyst_category": news_catalyst,
-            "vix_at_entry": round(vix, 2),
-        }
-
-        # Apply statistical constraints (Connection 4: constraints → position sizing)
-        if constraints and max_shares > 0:
-            max_shares, constraints_applied = apply_statistical_constraints(
-                max_shares, trade_context, constraints,
-            )
-            if constraints_applied:
-                trade_context["constraints_applied"] = constraints_applied
-        else:
-            constraints_applied = []
-
-        # 12. Get knowledge context
-        knowledge = get_relevant_knowledge(market_data)
-
-        # 12b. Load trade stats and format for trader prompt (Connection 6)
-        stats = load_trade_stats()
-        stats_summary = ""
-        if stats and stats.get("overall", {}).get("total", 0) > 0:
-            stats_summary = format_stats_for_prompt(stats, constraints)
-
-        # 12c. Connection 8: prediction accuracy → trader context
-        pred_accuracy = get_prediction_accuracy()
-        if pred_accuracy.get("scored_predictions", 0) > 0:
-            acc_lines = []
-            for horizon, data in pred_accuracy.get("direction_accuracy", {}).items():
-                acc_lines.append(f"{horizon}: {data['accuracy_pct']}% ({data['total']} predictions)")
-            if acc_lines:
-                accuracy_text = "Your prediction accuracy: " + ", ".join(acc_lines)
-                if stats_summary:
-                    stats_summary += f"\n\n{accuracy_text}"
-                else:
-                    stats_summary = accuracy_text
-
-        # 13. Compute hold streak
-        hold_streak = _get_hold_streak_context()
-
-        # 14. Run Trader phase (Connection 6: stats → trader prompt)
-        decision = run_trader(
-            thesis, market_data, signals, aggregate, portfolio,
-            knowledge=knowledge, macro_gate=macro_gate, regime=regime,
-            hold_streak=hold_streak, stats_summary=stats_summary,
-        )
-        action = decision.get("action", "HOLD")
-        shares = decision.get("shares", 0)
-
-        # 15. Apply macro gate confidence override
-        if macro_gate["gate_active"] and action == "BUY":
-            conf_threshold = macro_gate.get("confidence_threshold_override", 0.80)
-            if decision.get("confidence", 0) < conf_threshold:
-                logger.warning(
-                    f"Macro gate override: BUY confidence {decision.get('confidence', 0):.2f} "
-                    f"< required {conf_threshold:.2f}. Forcing HOLD."
-                )
-                action = "HOLD"
-                _log_hold_decision(decision, market_data, signals, "macro_gate_override")
-
-        # 16. Apply earnings blackout
-        if earnings_blocked and action == "BUY":
-            logger.info("Earnings blackout: blocking BUY, forcing HOLD")
-            action = "HOLD"
-            _log_hold_decision(decision, market_data, signals, "earnings_blackout")
-
-        # 17. Cap shares by ATR-sized max (already constraint-adjusted)
-        if action == "BUY" and shares > max_shares:
-            logger.info(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f} shares")
-            shares = max_shares
-
-        # 18. Execute or log HOLD (Connection 1+5: trade_context + constraints → transaction)
-        if action in ("BUY", "SELL") and shares > 0:
-            decision["_vix"] = vix
-            decision["_regime"] = regime
-            decision["_triggers"] = trigger_names
-            # Populate signals from strategy outputs (Connection 5b)
-            if not decision.get("signals"):
-                decision["signals"] = {
-                    s.strategy: {"action": s.action, "confidence": s.confidence}
-                    for s in signals
-                }
-            result = execute_trade(
-                action, shares, current_price, decision,
-                trade_context=trade_context,
-            )
-            if result["status"] == "executed":
-                txn = result["transaction"]
-                constraint_tag = f" [{len(constraints_applied)} constraints]" if constraints_applied else ""
-                logger.info(
-                    f"EXECUTED: {action} {shares:.4f} @ ${txn['price']:.2f}{constraint_tag} "
-                    f"| Cash: {format_currency(result['portfolio']['cash'])} "
-                    f"| Value: {format_currency(result['portfolio']['total_value'])}"
-                )
-                # Reset hold streak by logging a trade_executed entry
-                _log_hold_streak_reset(market_data)
-            elif result["status"] == "rejected":
-                logger.warning(f"Trade rejected: {result['reason']}")
-        else:
-            logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:100]}")
-            _log_hold_decision(decision, market_data, signals, "agent_decision")
-
-        # 19. Post-cycle tasks
-        try:
-            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
-        except Exception as e:
-            logger.warning(f"Failed to save latest cycle: {e}")
-
-        _post_cycle_tasks(current_price, market_data, regime)
-
-        # Handle research requests
-        research_req = decision.get("research_request")
-        if research_req:
-            logger.info(f"Agent requested research: {research_req}")
-            _save_research_request(research_req)
-
-    except Exception as e:
-        logger.error(f"v2 decision cycle error: {e}", exc_info=True)
-
-
-def _post_cycle_tasks(current_price: float, market_data: dict, regime: dict):
-    """Run tasks that happen after every cycle (triggered or not)."""
-    # Score predictions
-    scored = review_predictions(current_price)
-    if scored:
-        logger.info(f"Scored {len(scored)} predictions")
-
-    # Score hold counterfactuals
-    try:
-        evaluate_hold_counterfactuals(current_price)
-    except Exception as e:
-        logger.warning(f"Hold counterfactual scoring failed: {e}")
-
-    # Review recent trades
-    asyncio.run(_review_recent_trades(current_price))
-
-    # Refresh dashboard
-    try:
-        from .reporter import generate_dashboard_data
-        generate_dashboard_data()
-    except Exception as e:
-        logger.warning(f"Dashboard update failed: {e}")
-
-
-# --- v1 Decision Cycle (kept for backward compat / ensemble) ---
-
 def run_cycle():
-    """The core v3 trading cycle — regime-aware, macro-gated, ATR-sized."""
+    """The v4 trading cycle. Runs every 15 minutes during market hours."""
     config = load_config()
     ticker = config["ticker"]
 
     if not is_market_open(config):
         return
 
-    if check_daily_loss_limit():
-        logger.warning("Daily loss limit reached — skipping cycle")
-        return
-
     try:
-        # 1. Fetch market data (now includes macro + regime)
-        logger.info("--- Decision Cycle ---")
+        logger.info("--- v4 Decision Cycle ---")
+
+        # 1. Gather data
         market_data = get_market_summary(ticker)
         current_price = market_data["current"]["price"]
         regime = market_data.get("regime", {})
-        macro = market_data.get("macro", {})
-        atr = market_data.get("daily_indicators", {}).get("atr", 0) or 0
         vix = regime.get("vix", 0)
 
         logger.info(
             f"{ticker}: ${current_price} "
             f"({market_data['current'].get('change_pct', 0):+.2f}%) "
-            f"| Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')} "
             f"| VIX: {vix:.1f}"
         )
 
-        # 2. Check macro gate
-        macro_gate = check_macro_gate(config)
-        if macro_gate["gate_active"]:
-            logger.warning(f"Macro gate: {macro_gate['reason']}")
+        # World snapshot (macro + EV peers)
+        world = {}
+        try:
+            world = get_world_snapshot(config)
+        except Exception as e:
+            logger.warning(f"World snapshot failed: {e}")
 
-        # 3. Check earnings blackout
-        earnings_blocked = _check_earnings_blackout(ticker, config)
-        if earnings_blocked:
-            logger.info("Earnings blackout active — only SELL allowed")
+        # News feed
+        news_feed = None
+        try:
+            news_feed = fetch_news_feed(ticker)
+        except Exception as e:
+            logger.warning(f"News feed failed: {e}")
 
-        # 4. Update portfolio with current price
+        # Web search
+        web_results = []
+        try:
+            if config.get("brave_search", {}).get("enabled", False):
+                web_results = search_tsla_news()
+        except Exception as e:
+            logger.warning(f"Web search failed: {e}")
+
+        # 2. Update portfolio with current price
         portfolio = load_portfolio()
         portfolio = update_market_price(portfolio, ticker, current_price)
         save_portfolio(portfolio)
 
-        # 5. Check stop losses (dynamic ATR-based)
-        stop_signal = check_stop_losses(current_price, atr=atr, vix=vix)
-        if stop_signal:
-            logger.warning(f"STOP LOSS: selling {stop_signal['shares']:.4f} shares")
-            result = execute_trade(
-                "SELL", stop_signal["shares"], current_price,
-                {"strategy": "stop_loss", "confidence": 1.0,
-                 "hypothesis": stop_signal["reason"],
-                 "reasoning": "Automatic stop loss execution",
-                 "_vix": vix}
-            )
-            if result["status"] == "executed":
-                logger.info(f"Stop loss executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
-            return
-
-        # 5b. Check end-of-day position close (3:50 PM ET)
-        eod_signal = check_end_of_day_close(ticker, config)
-        if eod_signal:
-            result = execute_trade(
-                "SELL", eod_signal["shares"], current_price,
-                {"strategy": "eod_close", "confidence": 1.0,
-                 "hypothesis": eod_signal["reason"],
-                 "reasoning": "Automatic end-of-day position close to avoid overnight gap risk",
-                 "_vix": vix}
-            )
-            if result["status"] == "executed":
-                logger.info(f"EOD close executed: P&L ${result['transaction'].get('realized_pnl', 0):.2f}")
-            return
-
-        # 6. Check cooldown (ATR-scaled)
-        if not check_cooldown(ticker, atr=atr, current_price=current_price):
-            logger.info("Cooldown active — skipping decision")
-            return
-
-        # 7. Run strategy signals (regime-aware)
-        scores = get_strategy_scores()
-        signals = evaluate_all_strategies(market_data, portfolio, scores, regime=regime)
-        aggregate = aggregate_signals(signals)
-        logger.info(f"Aggregate signal: {aggregate.action} (conf={aggregate.confidence:.2f})")
-
-        # 8. Calculate position size (inverse ATR + gap risk reduction)
-        max_shares = calculate_position_size(
-            portfolio["total_value"], current_price, atr, vix, config
+        # 3. Get journal entries
+        journal_entries = get_recent_entries(
+            config.get("journal", {}).get("max_entries_in_brief", 10)
         )
-        max_shares = apply_gap_risk_reduction(max_shares, config)
 
-        # 9. Get knowledge context
-        knowledge = get_relevant_knowledge(market_data)
+        # 4. Check cooldown
+        if not check_cooldown(ticker):
+            logger.info("Cooldown active — skipping Claude call")
+            _update_dashboard(market_data, portfolio)
+            return
 
-        # 10. Compute hold streak context
-        hold_streak = _get_hold_streak_context()
-        if hold_streak["consecutive_holds"] >= 5:
-            logger.info(
-                f"Hold streak: {hold_streak['consecutive_holds']} consecutive, "
-                f"missed_gain_pct={hold_streak['missed_gain_pct']}%, "
-                f"last_trade={hold_streak['last_trade_hours_ago']}h ago"
-            )
+        # 5. Claude decides
+        decision = make_decision(
+            market_data=market_data,
+            world=world,
+            portfolio=portfolio,
+            news_feed=news_feed,
+            web_results=web_results,
+            journal_entries=journal_entries,
+            config=config,
+        )
 
-        # 11. Call agent for decision (with macro/regime/hold-streak context)
-        if config.get("multi_step_reasoning"):
-            logger.info("Using multi-step reasoning mode")
-            decision = make_decision_multi_step(
-                market_data, signals, aggregate, portfolio, knowledge,
-                macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
-            )
-        else:
-            decision = make_decision(
-                market_data, signals, aggregate, portfolio, knowledge,
-                macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
-            )
         action = decision.get("action", "HOLD")
         shares = decision.get("shares", 0)
 
-        # 12. Apply macro gate confidence override
-        if macro_gate["gate_active"] and action == "BUY":
-            conf_threshold = macro_gate.get("confidence_threshold_override", 0.80)
-            if decision.get("confidence", 0) < conf_threshold:
-                logger.warning(
-                    f"Macro gate override: BUY confidence {decision.get('confidence', 0):.2f} "
-                    f"< required {conf_threshold:.2f}. Forcing HOLD."
-                )
-                action = "HOLD"
-                _log_hold_decision(decision, market_data, signals, "macro_gate_override")
-
-        # 13. Apply earnings blackout (block BUY only)
-        if earnings_blocked and action == "BUY":
-            logger.info("Earnings blackout: blocking BUY, forcing HOLD")
-            action = "HOLD"
-            _log_hold_decision(decision, market_data, signals, "earnings_blackout")
-
-        # 14. (Hard override removed — was forcing panic BUYs with 12% win rate.
-        #     The statistical constraint system now handles position sizing instead.)
-
-        # 15. Cap shares by ATR-sized max
-        if action == "BUY" and shares > max_shares:
-            logger.info(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f} shares")
-            shares = max_shares
-
-        # 16. Execute or log HOLD
+        # 6. Execute
         if action in ("BUY", "SELL") and shares > 0:
-            decision["_vix"] = vix  # Pass VIX for slippage calculation
-            decision["_regime"] = regime  # Pass regime for transaction record
             result = execute_trade(action, shares, current_price, decision)
+
             if result["status"] == "executed":
                 txn = result["transaction"]
                 logger.info(
@@ -652,1102 +135,141 @@ def run_cycle():
                     f"| Cash: {format_currency(result['portfolio']['cash'])} "
                     f"| Value: {format_currency(result['portfolio']['total_value'])}"
                 )
-                # Reset hold streak by logging a trade_executed entry
-                _log_hold_streak_reset(market_data)
+
+                # Build market snapshot for journal
+                market_snapshot = (
+                    f"{ticker} ${current_price} "
+                    f"({market_data['current'].get('change_pct', 0):+.2f}%), "
+                    f"VIX {vix:.1f}"
+                )
+                spy_data = world.get("macro", {}).get("SPY", {})
+                if spy_data:
+                    market_snapshot += f", SPY {spy_data.get('change_pct', 0):+.2f}%"
+
+                # Record in journal
+                journal_add_entry(
+                    trade_id=txn["id"],
+                    action=action,
+                    ticker=ticker,
+                    shares=txn["shares"],
+                    price=txn["price"],
+                    reasoning=decision.get("reasoning", ""),
+                    confidence=decision.get("confidence", 0),
+                    portfolio_value=result["portfolio"]["total_value"],
+                    market_snapshot=market_snapshot,
+                )
+
+                # If this was a SELL, close the corresponding BUY journal entry
+                if action == "SELL" and txn.get("realized_pnl") is not None:
+                    _close_journal_for_sell(txn)
+
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
-            logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:100]}")
-            _log_hold_decision(decision, market_data, signals, "agent_decision")
+            logger.info(f"HOLD — {decision.get('reasoning', 'N/A')[:120]}")
 
-        # 14b. Save latest cycle for Agent's Mind dashboard card
-        try:
-            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
-        except Exception as e:
-            logger.warning(f"Failed to save latest cycle: {e}")
+        # 7. Save latest cycle for dashboard
+        _save_latest_cycle(decision, market_data, regime, world)
 
-        # 15. Score pending predictions
-        scored = review_predictions(current_price)
-        if scored:
-            logger.info(f"Scored {len(scored)} predictions")
-
-        # 15b. Score pending HOLD counterfactuals
-        try:
-            evaluate_hold_counterfactuals(current_price)
-        except Exception as e:
-            logger.warning(f"Hold counterfactual scoring failed: {e}")
-
-        # 16. Review recent unreviewed trades
-        asyncio.run(_review_recent_trades(current_price))
-
-        # 17. Handle research requests
-        research_req = decision.get("research_request")
-        if research_req:
-            logger.info(f"Agent requested research: {research_req}")
-            _save_research_request(research_req)
-
-        # 18. Refresh dashboard
-        try:
-            from .reporter import generate_dashboard_data
-            generate_dashboard_data()
-        except Exception as e:
-            logger.warning(f"Dashboard update failed: {e}")
+        # 8. Update dashboard
+        _update_dashboard(market_data, portfolio)
 
     except Exception as e:
-        logger.error(f"Decision cycle error: {e}", exc_info=True)
+        logger.error(f"v4 decision cycle error: {e}", exc_info=True)
 
 
-async def _review_recent_trades(current_price: float):
-    """Review any trades that haven't been reviewed yet."""
-    from .portfolio import load_transactions
-    transactions = load_transactions()
-    unreviewed = [
-        t for t in transactions
-        if t.get("review") is None and t.get("hypothesis")
-    ]
-
-    # Only review trades older than 30 minutes (give the hypothesis time to play out)
-    from datetime import timezone, timedelta
-    now = datetime.now(timezone.utc)
-    for trade in unreviewed:
-        trade_time = datetime.fromisoformat(trade["timestamp"])
-        if (now - trade_time).total_seconds() > 1800:  # 30 min
-            logger.info(f"Reviewing trade {trade['id']}...")
-            await review_trade(trade, current_price)
+def _close_journal_for_sell(sell_txn: dict):
+    """Find the most recent open BUY journal entry and close it."""
+    journal = load_journal()
+    for entry in reversed(journal):
+        if (entry["action"] == "BUY"
+            and entry["ticker"] == sell_txn["ticker"]
+            and entry.get("lesson") is None):
+            journal_close_entry(
+                open_trade_id=entry["trade_id"],
+                close_trade_id=sell_txn["id"],
+                close_price=sell_txn["price"],
+                realized_pnl=sell_txn["realized_pnl"],
+            )
+            return
+    logger.warning(f"No open BUY journal entry found to close for {sell_txn['id']}")
 
 
-def _save_research_request(topic: str):
-    """Save a research request for the next research cycle."""
-    from .utils import load_json, save_json
-    path = DATA_DIR / "research_requests.json"
-    requests = load_json(path, default=[])
-    requests.append({"topic": topic, "requested_at": iso_now()})
-    save_json(path, requests)
-
-
-def _save_latest_cycle(decision: dict, signals, aggregate, market_data: dict, regime: dict):
-    """Save the latest decision cycle data for the Agent's Mind dashboard card."""
-    signal_balance = calculate_signal_balance(signals) if signals else None
-
-    strategy_signals = []
-    for s in (signals or []):
-        strategy_signals.append({
-            "strategy": s.strategy,
-            "action": s.action,
-            "confidence": s.confidence,
-            "weight": s.weight,
-            "reasoning": s.reasoning,
-        })
-
+def _save_latest_cycle(decision: dict, market_data: dict, regime: dict, world: dict):
+    """Save the latest cycle data for the dashboard Agent's Mind card."""
     cycle_data = {
         "timestamp": iso_now(),
         "action": decision.get("action", "HOLD"),
+        "shares": decision.get("shares", 0),
         "confidence": decision.get("confidence", 0),
-        "strategy": decision.get("strategy", ""),
-        "hypothesis": decision.get("hypothesis", ""),
         "reasoning": decision.get("reasoning", ""),
+        "risk_note": decision.get("risk_note", ""),
         "price": market_data.get("current", {}).get("price", 0),
-        "ticker": market_data.get("ticker", "TSLA"),
-        "aggregate_signal": {
-            "action": aggregate.action if aggregate else "HOLD",
-            "confidence": aggregate.confidence if aggregate else 0,
-        },
-        "strategy_signals": strategy_signals,
-        "signal_balance": signal_balance,
-        "regime": {
-            "trend": regime.get("trend", "unknown"),
-            "volatility": regime.get("volatility", "unknown"),
-            "vix": regime.get("vix", 0),
-        },
-        "hold_analysis": decision.get("hold_analysis"),
-        "predictions": decision.get("predictions"),
-        "knowledge_applied": decision.get("knowledge_applied", []),
-        "multi_step_trace": decision.get("_multi_step"),
+        "regime": regime,
+        "vix": regime.get("vix", 0),
     }
-
     save_json(DATA_DIR / "latest_cycle.json", cycle_data)
 
 
-def _log_hold_decision(decision: dict, market_data: dict, signals, reason: str):
-    """Log a HOLD decision with counterfactual tracking data and signal balance."""
-    from .utils import load_json, save_json
-    path = DATA_DIR / "hold_log.json"
-    holds = load_json(path, default=[])
-
-    strongest = None
-    if signals:
-        non_hold = [s for s in signals if s.action != "HOLD"]
-        if non_hold:
-            strongest = max(non_hold, key=lambda s: s.confidence)
-
-    # Calculate signal balance at time of HOLD
-    signal_balance = calculate_signal_balance(signals) if signals else None
-
-    # Extract hold_analysis from agent decision
-    hold_analysis = decision.get("hold_analysis")
-
-    entry = {
-        "timestamp": iso_now(),
-        "reason": reason,
-        "original_action": decision.get("action", "HOLD"),
-        "original_confidence": decision.get("confidence", 0),
-        "original_strategy": decision.get("strategy", ""),
-        "price_at_hold": market_data.get("current", {}).get("price", 0),
-        "strongest_signal_ignored": {
-            "action": strongest.action,
-            "strategy": strongest.strategy,
-            "confidence": strongest.confidence,
-        } if strongest else None,
-        "signal_balance": signal_balance,
-        "hold_analysis": hold_analysis,
-        "regime": market_data.get("regime", {}),
-        "counterfactual_scored": False,
-        "counterfactual_outcome": None,
-    }
-    holds.append(entry)
-    # Keep last 200
-    if len(holds) > 200:
-        holds = holds[-200:]
-    save_json(path, holds)
+def _update_dashboard(market_data: dict, portfolio: dict):
+    """Refresh dashboard data."""
+    try:
+        from .reporter import generate_dashboard_data
+        generate_dashboard_data()
+    except Exception as e:
+        logger.warning(f"Dashboard update failed: {e}")
 
 
-def _log_hold_streak_reset(market_data: dict):
-    """Add a trade_executed entry to hold_log.json to reset the consecutive hold count."""
-    from .utils import load_json, save_json
-    path = DATA_DIR / "hold_log.json"
-    holds = load_json(path, default=[])
-    holds.append({
-        "timestamp": iso_now(),
-        "reason": "trade_executed",
-        "price_at_hold": market_data.get("current", {}).get("price", 0),
-        "counterfactual_scored": False,
-        "counterfactual_outcome": None,
-    })
-    if len(holds) > 200:
-        holds = holds[-200:]
-    save_json(path, holds)
-
-
-def _get_hold_streak_context() -> dict:
-    """Compute hold streak stats for agent prompt context."""
-    from datetime import datetime, timezone
-    from .portfolio import load_transactions
-
-    holds = load_json(DATA_DIR / "hold_log.json", default=[])
-    txns = load_transactions()
-
-    # Consecutive agent_decision holds from tail
-    consecutive = 0
-    for h in reversed(holds):
-        if h.get("reason") == "agent_decision":
-            consecutive += 1
-        else:
-            break
-
-    # Recent scored holds (last 20)
-    scored = [h for h in holds if h.get("counterfactual_scored") and h.get("counterfactual_outcome")]
-    recent = scored[-20:]
-    missed = sum(1 for h in recent if h["counterfactual_outcome"].get("verdict") == "missed_gain")
-    correct = sum(1 for h in recent if h["counterfactual_outcome"].get("verdict") == "correct_hold")
-
-    # Hours since last trade
-    last_trade_ago = None
-    if txns:
-        last_ts = txns[-1].get("timestamp", "")
-        if last_ts:
-            try:
-                last_time = datetime.fromisoformat(last_ts)
-                last_trade_ago = round((datetime.now(timezone.utc) - last_time).total_seconds() / 3600, 1)
-            except Exception:
-                pass
-
-    return {
-        "consecutive_holds": consecutive,
-        "recent_missed_gains": missed,
-        "recent_correct_holds": correct,
-        "missed_gain_pct": round(missed / max(missed + correct, 1) * 100, 1),
-        "last_trade_hours_ago": last_trade_ago,
-    }
-
-
-def evaluate_hold_counterfactuals(current_price: float):
-    """Score past HOLD decisions against actual price movement.
-
-    For each unscored HOLD older than 2 hours, calculate what would have
-    happened if the strongest ignored signal had been followed:
-    - If strongest was BUY: did price go up? (missed opportunity)
-    - If strongest was SELL: did price go down? (missed opportunity)
-    - Calculate hypothetical P&L based on a standard position size.
-    """
-    from .utils import load_json, save_json
-    from datetime import datetime, timezone
-
-    path = DATA_DIR / "hold_log.json"
-    holds = load_json(path, default=[])
-    if not holds:
-        return
-
-    now = datetime.now(timezone.utc)
-    updated = False
-    config = load_config()
-    portfolio_value = load_portfolio().get("total_value", 1000)
-    standard_trade_pct = config.get("risk_params", {}).get("max_single_trade_pct", 0.20)
-    hypothetical_trade_value = portfolio_value * standard_trade_pct * 0.5  # Half of max
-
-    for hold in holds:
-        if hold.get("counterfactual_scored"):
-            continue
-
-        hold_time = datetime.fromisoformat(hold["timestamp"])
-        elapsed_hours = (now - hold_time).total_seconds() / 3600
-
-        # Score after 2 hours
-        if elapsed_hours < 2:
-            continue
-
-        price_at_hold = hold.get("price_at_hold", 0)
-        if price_at_hold <= 0:
-            hold["counterfactual_scored"] = True
-            updated = True
-            continue
-
-        strongest = hold.get("strongest_signal_ignored")
-        if not strongest:
-            hold["counterfactual_scored"] = True
-            hold["counterfactual_outcome"] = {
-                "verdict": "no_signal",
-                "note": "No non-HOLD signal was present.",
-            }
-            updated = True
-            continue
-
-        price_change = current_price - price_at_hold
-        price_change_pct = (price_change / price_at_hold) * 100
-
-        # Calculate hypothetical shares
-        hypothetical_shares = hypothetical_trade_value / price_at_hold if price_at_hold > 0 else 0
-
-        ignored_action = strongest.get("action", "HOLD")
-        if ignored_action == "BUY":
-            # Would buying have been profitable?
-            hypothetical_pnl = hypothetical_shares * price_change
-            was_right = price_change > 0
-            verdict = "missed_gain" if was_right else "correct_hold"
-        elif ignored_action == "SELL":
-            # Would selling have been profitable?
-            hypothetical_pnl = hypothetical_shares * (-price_change)
-            was_right = price_change < 0
-            verdict = "missed_gain" if was_right else "correct_hold"
-        else:
-            hypothetical_pnl = 0
-            was_right = False
-            verdict = "neutral"
-
-        hold["counterfactual_scored"] = True
-        hold["counterfactual_outcome"] = {
-            "price_after_2hr": round(current_price, 2),
-            "price_change_pct": round(price_change_pct, 3),
-            "ignored_action": ignored_action,
-            "ignored_confidence": strongest.get("confidence", 0),
-            "hypothetical_pnl": round(hypothetical_pnl, 2),
-            "was_signal_right": was_right,
-            "verdict": verdict,
-        }
-        updated = True
-
-        if was_right:
-            logger.info(
-                f"HOLD counterfactual: {ignored_action} signal was RIGHT — "
-                f"missed ${abs(hypothetical_pnl):.2f} "
-                f"(price moved {price_change_pct:+.2f}%)"
-            )
-        else:
-            logger.info(
-                f"HOLD counterfactual: {ignored_action} signal was WRONG — "
-                f"HOLD was correct (price moved {price_change_pct:+.2f}%)"
-            )
-
-    if updated:
-        save_json(path, holds)
-
-
-def _check_earnings_blackout(ticker: str, config: dict = None) -> bool:
-    """Check if we're within earnings blackout window.
-
-    Reads upcoming_earnings dates saved by researcher.py (via yfinance)
-    and returns True if any earnings date falls within the blackout window.
-    """
-    if config is None:
-        config = load_config()
-    blackout_hours = config.get("risk_params", {}).get("earnings_blackout_hours", 48)
-    if blackout_hours <= 0:
-        return False
-
-    from datetime import datetime, timezone, timedelta
-    from .utils import load_json, KNOWLEDGE_DIR
-
-    earnings = load_json(KNOWLEDGE_DIR / "research" / "earnings_history.json", default={})
-    upcoming = earnings.get("upcoming_earnings", [])
-    if not upcoming:
-        return False
-
-    now = datetime.now(timezone.utc)
-    blackout_start = now
-    blackout_end = now + timedelta(hours=blackout_hours)
-
-    for date_str in upcoming:
-        try:
-            earnings_dt = datetime.fromisoformat(date_str)
-            if earnings_dt.tzinfo is None:
-                earnings_dt = earnings_dt.replace(tzinfo=timezone.utc)
-            # If earnings fall between now and now + blackout_hours, we're in blackout
-            if blackout_start <= earnings_dt <= blackout_end:
-                logger.info(f"Earnings blackout: {ticker} earnings on {earnings_dt.isoformat()} within {blackout_hours}hr window")
-                return True
-        except (ValueError, TypeError):
-            continue
-
-    return False
-
-
-# --- Research Cycle (daily, after market close) ---
-
-async def run_daily_research():
-    """Daily learning + research cycle. Runs after market close."""
-    config = load_config()
-    ticker = config["ticker"]
-    logger.info("=== Daily Research & Learning Cycle ===")
+def run_daily_tasks():
+    """Run after market close: snapshot."""
+    try:
+        save_snapshot()
+    except Exception as e:
+        logger.warning(f"Daily tasks failed: {e}")
 
     try:
-        # Get current price for reviews
-        current = get_current_price(ticker)
-        current_price = current["price"]
-        portfolio = load_portfolio()
-
-        # 1. Run full learning cycle
-        await run_learning_cycle(current_price, portfolio)
-
-        # 1b. Connection 9: Recompute trade stats and constraints after learning cycle
-        try:
-            stats = compute_and_save_trade_stats()
-            constraints = generate_and_save_constraints()
-            logger.info(
-                f"Nightly stats refresh: {stats['overall'].get('total', 0)} trades analyzed, "
-                f"{len(constraints)} constraints active"
-            )
-        except Exception as e:
-            logger.warning(f"Nightly stats refresh failed: {e}")
-
-        # 1c. Connection 5c: Check prediction accuracy trend and log alert
-        try:
-            pred_acc = get_prediction_accuracy()
-            # Check rolling accuracy on scored predictions
-            for horizon in ("30min", "2hr", "1day"):
-                h_data = pred_acc.get("direction_accuracy", {}).get(horizon, {})
-                if h_data.get("total", 0) >= 10:
-                    acc = h_data.get("accuracy_pct", 50)
-                    if acc < 40:
-                        logger.warning(
-                            f"PREDICTION ACCURACY ALERT: {horizon} accuracy at {acc}% "
-                            f"(last {h_data['total']} predictions). "
-                            f"Agent may be systematically overconfident."
-                        )
-        except Exception as e:
-            logger.debug(f"Prediction accuracy check failed: {e}")
-
-        # 2. Run research tasks
-        logger.info("Running research tasks...")
-        await run_full_research(ticker)
-
-        # 3. Handle queued research requests
-        from .utils import load_json, save_json
-        req_path = DATA_DIR / "research_requests.json"
-        requests = load_json(req_path, default=[])
-        if requests:
-            from .researcher import research_on_demand
-            for req in requests[-3:]:  # Max 3 on-demand requests per day
-                logger.info(f"On-demand research: {req['topic']}")
-                await research_on_demand(ticker, req["topic"])
-            save_json(req_path, [])  # Clear queue
-
-        # 4. Update benchmarks
-        try:
-            from .benchmarks import BenchmarkTracker
-            bt = BenchmarkTracker()
-            bt.update_daily(tsla_price=current_price)
-            logger.info("Benchmarks updated")
-        except Exception as e:
-            logger.warning(f"Benchmark update failed: {e}")
-
-        # 5. Check milestones
-        try:
-            from .observability import MilestoneChecker
-            from .benchmarks import BenchmarkTracker
-            bt_check = BenchmarkTracker()
-            comparison = bt_check.get_comparison(portfolio["total_value"])
-            # Compute Sharpe ratio and max drawdown from daily snapshots
-            import numpy as np
-            snapshot_files = sorted((DATA_DIR / "snapshots").glob("*.json"))
-            sharpe_ratio = 0.0
-            max_drawdown_pct = 0.0
-            if len(snapshot_files) >= 2:
-                values = []
-                for sf in snapshot_files:
-                    snap = load_json(sf, default={})
-                    values.append(snap.get("total_value", 1000))
-                values = np.array(values, dtype=float)
-                daily_returns = np.diff(values) / values[:-1]
-                if len(daily_returns) > 1 and np.std(daily_returns) > 0:
-                    sharpe_ratio = float(np.mean(daily_returns) / np.std(daily_returns) * np.sqrt(252))
-                peak = np.maximum.accumulate(values)
-                drawdowns = (peak - values) / peak
-                max_drawdown_pct = float(np.max(drawdowns) * 100)
-
-            # Get prediction accuracy
-            from .knowledge_base import get_prediction_accuracy
-            pred_acc = get_prediction_accuracy()
-            pred_2hr = pred_acc.get("direction_accuracy", {}).get("2hr", {})
-            prediction_accuracy_pct = pred_2hr.get("accuracy_pct", 0)
-
-            milestone_metrics = {
-                "trading_days": len(snapshot_files),
-                "total_trades": portfolio.get("total_trades", 0),
-                "percentile_vs_random": comparison.get("percentile_vs_random", 0),
-                "beats_buy_hold_tsla": comparison.get("beats_buy_hold_tsla", False),
-                "prediction_accuracy_pct": prediction_accuracy_pct,
-                "total_return_pct": portfolio.get("total_pnl_pct", 0),
-                "sharpe_ratio": round(sharpe_ratio, 3),
-                "max_drawdown_pct": round(max_drawdown_pct, 2),
-            }
-            mc = MilestoneChecker()
-            new_milestones = mc.check_all(milestone_metrics)
-            if new_milestones:
-                for m in new_milestones:
-                    logger.info(f"MILESTONE: {m['milestone_id']} — {m['message']}")
-        except Exception as e:
-            logger.warning(f"Milestone check failed: {e}")
-
-        # 6. Run ensemble analysis (if multiple agents configured)
-        try:
-            from .meta_learner import daily_ensemble_analysis, write_ensemble_journal
-            from .ensemble import list_agents
-            if list_agents():
-                analysis = await daily_ensemble_analysis()
-                await write_ensemble_journal()
-                logger.info(f"Ensemble analysis complete: {len(analysis.get('leaderboard_summary', []))} agents")
-            else:
-                logger.info("Single-agent mode — skipping ensemble analysis")
-        except Exception as e:
-            logger.warning(f"Ensemble analysis failed: {e}")
-
-        # 7. Save daily snapshot
-        save_snapshot()
-
-        # 8. Generate dashboard (full=True for daily benchmark recalculation)
-        from .reporter import generate_dashboard_data, generate_daily_report
+        from .reporter import generate_dashboard_data
         generate_dashboard_data(full=True)
-
-        # 9. Generate daily owner report
-        try:
-            report = generate_daily_report()
-            logger.info(f"Daily owner report:\n{report}")
-        except Exception as e:
-            logger.warning(f"Daily report generation failed: {e}")
-
-        # 10. Summary
-        summary = get_portfolio_summary()
-        logger.info(
-            f"Daily summary: Value={format_currency(summary['total_value'])} "
-            f"P&L={format_currency(summary['total_pnl'])} ({format_pct(summary['total_pnl_pct'])}) "
-            f"Trades={summary['total_trades']} WinRate={summary['win_rate']}%"
-        )
-        logger.info(get_knowledge_summary())
-
     except Exception as e:
-        logger.error(f"Daily research cycle error: {e}", exc_info=True)
+        logger.warning(f"Dashboard generation failed: {e}")
 
 
-# --- Bootstrap (first run) ---
+def main():
+    parser = argparse.ArgumentParser(description="MonopolyTrader v4")
+    parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    parser.add_argument("--report", action="store_true", help="Generate dashboard and exit")
+    args = parser.parse_args()
 
-async def bootstrap():
-    """First-time setup: initialize everything, research before trading."""
     config = load_config()
-    ticker = config["ticker"]
-    logger.info("=== BOOTSTRAP: First Run Setup ===")
+    logger.info("MonopolyTrader v4 starting")
 
-    # 1. Initialize knowledge base
-    init_kb()
-    logger.info("Knowledge base initialized")
+    # Ensure data directories exist
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "snapshots").mkdir(parents=True, exist_ok=True)
 
-    # 2. Initialize portfolio
-    portfolio = load_portfolio()
-    logger.info(f"Portfolio initialized: {format_currency(portfolio['total_value'])}")
+    if args.report:
+        from .reporter import generate_dashboard_data
+        generate_dashboard_data(full=True)
+        logger.info("Dashboard generated")
+        return
 
-    # 3. Run all research
-    if config["learning"]["research_on_startup"]:
-        logger.info("Running initial research (this may take a minute)...")
-        await run_full_research(ticker)
-        logger.info("Initial research complete")
+    if args.once:
+        run_cycle()
+        return
 
-    # 4. Save initial snapshot
-    save_snapshot()
+    # Schedule
+    interval = config.get("poll_interval_minutes", 15)
+    schedule.every(interval).minutes.do(run_cycle)
+    schedule.every().day.at("16:15").do(run_daily_tasks)
 
-    # 5. Write initial journal entry
-    await write_journal_entry(portfolio)
-
-    logger.info("=== Bootstrap complete — ready to trade ===")
-
-
-def _is_bootstrapped() -> bool:
-    """Check if we've already bootstrapped."""
-    from .utils import KNOWLEDGE_DIR
-    journal = KNOWLEDGE_DIR / "journal.md"
-    if not journal.exists():
-        return False
-    content = journal.read_text()
-    return len(content) > 50  # More than just the header
-
-
-# --- Scheduler ---
-
-def _et_to_utc_time(et_time_str: str) -> str:
-    """Convert an ET time string (HH:MM) to UTC (HH:MM) for the schedule library.
-
-    The schedule library uses the system clock (UTC on our server), so all
-    .at() times must be expressed in UTC. This converts ET → UTC accounting
-    for the current EST/EDT offset.
-    """
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-
-    et_tz = ZoneInfo("America/New_York")
-    utc_tz = ZoneInfo("UTC")
-    h, m = map(int, et_time_str.split(":"))
-
-    # Build a datetime for today at the target ET time
-    now = datetime.now(et_tz)
-    target_et = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    # Convert to UTC
-    target_utc = target_et.astimezone(utc_tz)
-    return target_utc.strftime("%H:%M")
-
-
-def run_scheduler():
-    """Main scheduler loop — polls during market hours, researches after close."""
-    config = load_config()
-    interval = config["poll_interval_minutes"]
-
-    logger.info(f"Scheduler started — polling every {interval} min during market hours")
-    logger.info(f"Market hours: {config['market_hours']['open']}-{config['market_hours']['close']} ET")
-
-    # Convert ET target times to UTC for the schedule library (server is UTC)
-    snapshot_utc = _et_to_utc_time("09:35")
-    research_utc = _et_to_utc_time("16:30")
-    decay_utc = _et_to_utc_time("18:00")
-
-    logger.info(
-        f"Scheduled times (ET→UTC): snapshot 09:35→{snapshot_utc}, "
-        f"research 16:30→{research_utc}, decay Sun 18:00→{decay_utc}"
-    )
-
-    # Schedule decision cycles (v2 event-driven)
-    schedule.every(interval).minutes.do(run_cycle_v2)
-
-    # Schedule daily research at 4:30 PM ET (30 min after close)
-    schedule.every().day.at(research_utc).do(lambda: asyncio.run(run_daily_research()))
-
-    # Schedule daily snapshot at market open
-    schedule.every().day.at(snapshot_utc).do(save_snapshot)
-
-    # Schedule weekly lesson decay (Sundays at 6 PM ET)
-    def _weekly_decay():
-        try:
-            from .knowledge_base import apply_lesson_decay
-            archived = apply_lesson_decay()
-            logger.info(f"Weekly lesson decay complete: {archived} archived")
-        except Exception as e:
-            logger.warning(f"Lesson decay failed: {e}")
-    schedule.every().sunday.at(decay_utc).do(_weekly_decay)
-
-    # Run initial cycle immediately if market is open
-    if is_market_open(config):
-        logger.info("Market is open — running initial v2 cycle")
-        run_cycle_v2()
-    else:
-        et = now_et()
-        logger.info(f"Market closed (ET: {et.strftime('%H:%M %A')}). Waiting for market hours...")
+    logger.info(f"Scheduler started: every {interval}min during market hours")
+    run_cycle()  # Run immediately
 
     while _running:
         schedule.run_pending()
         time.sleep(10)
 
-    logger.info("Scheduler stopped")
-
-
-# --- Single Cycle Mode ---
-
-def run_once():
-    """Run a single v2 thesis-driven decision cycle (for testing)."""
-    config = load_config()
-    ticker = config["ticker"]
-
-    init_kb()
-
-    logger.info("--- Single Cycle Mode (v2 thesis-driven) ---")
-
-    try:
-        # Fetch market data + news
-        market_data = get_market_summary(ticker)
-        current_price = market_data["current"]["price"]
-        regime = market_data.get("regime", {})
-        atr = market_data.get("daily_indicators", {}).get("atr", 0) or 0
-        vix = regime.get("vix", 0)
-
-        print(f"\n{ticker}: ${current_price}")
-        print(f"Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')} | VIX: {vix:.1f} | ATR: {atr:.2f}")
-
-        # News feed
-        news = fetch_news_feed(ticker)
-        print(f"News: {len(news.items)} items, {len(news.high_impact)} high-impact")
-
-        # Thesis
-        thesis = load_thesis()
-        if thesis is None:
-            print("No thesis found — creating initial thesis")
-            thesis = create_initial_thesis()
-        print(f"Thesis: {thesis.direction} (conviction {thesis.conviction:.2f})")
-
-        # Macro gate
-        macro_gate = check_macro_gate(config)
-        if macro_gate["gate_active"]:
-            print(f"MACRO GATE ACTIVE: {macro_gate['reason']}")
-
-        portfolio = load_portfolio()
-        portfolio = update_market_price(portfolio, ticker, current_price)
-        save_portfolio(portfolio)
-
-        # Dynamic ATR stop losses
-        stop_signal = check_stop_losses(current_price, atr=atr, vix=vix)
-        if stop_signal:
-            logger.warning(f"STOP LOSS triggered")
-            execute_trade("SELL", stop_signal["shares"], current_price,
-                         {"strategy": "stop_loss", "confidence": 1.0,
-                          "hypothesis": stop_signal["reason"],
-                          "reasoning": "Automatic stop loss",
-                          "_vix": vix})
-            return
-
-        # Evaluate triggers (force all in --once mode)
-        triggers = evaluate_triggers(thesis, news, market_data, config)
-        print(f"Triggers: {[t['type'] for t in triggers] if triggers else 'none (forcing analyst anyway)'}")
-
-        # Always run analyst in --once mode
-        trigger_reason = triggers[0]["reason"] if triggers else "manual --once mode"
-        old_thesis = thesis
-        thesis = run_analyst(thesis, news, market_data, regime, trigger_reason)
-        if thesis != old_thesis:
-            save_thesis(thesis, trigger_reason)
-            print(f"Thesis updated → {thesis.direction} (conviction {thesis.conviction:.2f})")
-
-        # Run trader
-        scores = get_strategy_scores()
-        signals = evaluate_all_strategies(
-            market_data, portfolio, scores, regime=regime,
-            thesis_direction=thesis.direction, thesis_conviction=thesis.conviction,
-        )
-        aggregate = aggregate_signals(signals)
-
-        # Position sizing with gap risk reduction
-        max_shares = calculate_position_size(
-            portfolio["total_value"], current_price, atr, vix, config
-        )
-        max_shares = apply_gap_risk_reduction(max_shares, config)
-        print(f"ATR position cap: {max_shares:.4f} shares")
-
-        knowledge = get_relevant_knowledge(market_data)
-
-        # Count hold streak
-        txns = load_json(DATA_DIR / "transactions.json") or []
-        hold_streak = 0
-        for t in reversed(txns):
-            if t.get("action") == "HOLD":
-                hold_streak += 1
-            else:
-                break
-
-        decision = run_trader(
-            thesis, market_data, signals, aggregate, portfolio, knowledge,
-            macro_gate=macro_gate, regime=regime, hold_streak=hold_streak,
-        )
-
-        action = decision.get("action", "HOLD")
-        shares = decision.get("shares", 0)
-
-        # Cap by ATR sizing
-        if action == "BUY" and shares > max_shares:
-            print(f"ATR sizing: capping {shares:.4f} to {max_shares:.4f}")
-            shares = max_shares
-
-        if action in ("BUY", "SELL") and shares > 0:
-            decision["_vix"] = vix
-            result = execute_trade(action, shares, current_price, decision)
-            status = result["status"]
-            if status == "executed":
-                txn = result["transaction"]
-                print(f"\nEXECUTED: {action} {shares:.4f} {ticker} @ ${txn['price']:.2f}")
-                print(f"Cash: {format_currency(result['portfolio']['cash'])}")
-                print(f"Value: {format_currency(result['portfolio']['total_value'])}")
-            else:
-                print(f"\nREJECTED: {result.get('reason', 'unknown')}")
-        else:
-            print(f"\nHOLD: {decision.get('reasoning', 'N/A')[:150]}")
-
-        # Save latest cycle for Agent's Mind dashboard card
-        try:
-            _save_latest_cycle(decision, signals, aggregate, market_data, regime)
-        except Exception as e:
-            logger.warning(f"Failed to save latest cycle: {e}")
-
-        review_predictions(current_price)
-
-        summary = get_portfolio_summary()
-        print(f"\nPortfolio: {format_currency(summary['total_value'])} "
-              f"(P&L: {format_currency(summary['total_pnl'])} / {format_pct(summary['total_pnl_pct'])})")
-
-    except Exception as e:
-        logger.error(f"Single cycle error: {e}", exc_info=True)
-
-
-# --- CLI ---
-
-def main():
-    parser = argparse.ArgumentParser(description="MonopolyTrader - AI Stock Trading Agent")
-    parser.add_argument("--once", action="store_true", help="Run a single decision cycle")
-    parser.add_argument("--ensemble", action="store_true", help="Run ensemble cycle (all agents)")
-    parser.add_argument("--bootstrap", action="store_true", help="Run first-time setup (research before trading)")
-    parser.add_argument("--research", action="store_true", help="Run daily research cycle")
-    parser.add_argument("--learn", action="store_true", help="Run learning cycle (review trades, discover patterns)")
-    parser.add_argument("--report", action="store_true", help="Print portfolio report")
-    parser.add_argument("--status", action="store_true", help="Print current status")
-    parser.add_argument("--backtest", action="store_true", help="Run walk-forward backtest vs random traders")
-    parser.add_argument("--health", action="store_true", help="Check system health status")
-    parser.add_argument("--alerts", action="store_true", help="Show active anomaly alerts")
-    parser.add_argument("--leaderboard", action="store_true", help="Show agent ensemble leaderboard")
-    parser.add_argument("--explain-trade", type=str, metavar="TXN_ID", help="Explain a specific trade decision")
-    parser.add_argument("--milestones", action="store_true", help="Show triggered milestones")
-    parser.add_argument("--graduation-report", action="store_true", help="Show graduation criteria status")
-    parser.add_argument("--debug-traces", type=int, nargs="?", const=5, metavar="N", help="Show last N decision traces")
-    parser.add_argument("--influence-report", action="store_true", help="Show strategy influence breakdown")
-    # Replay mode flags
-    parser.add_argument("--replay", type=int, metavar="YEAR", help="Run historical replay for a given year (e.g., --replay 2023)")
-    parser.add_argument("--practice", type=str, metavar="SCENARIO", help="Run targeted practice scenario (e.g., --practice crash_2022)")
-    parser.add_argument("--no-obfuscate", action="store_true", help="Disable price obfuscation in replay mode (for debugging)")
-    parser.add_argument("--purge-replay-lessons", type=str, metavar="SESSION", nargs="?", const="ALL", help="Remove replay-sourced lessons (optionally by session ID)")
-    parser.add_argument("--disable-lesson", type=str, metavar="LESSON_ID", help="Disable a specific lesson by ID")
-    parser.add_argument("--enable-lesson", type=str, metavar="LESSON_ID", help="Re-enable a disabled lesson by ID")
-    args = parser.parse_args()
-
-    init_kb()
-
-    if args.ensemble:
-        from .ensemble import run_ensemble_cycle
-        if not is_market_open():
-            print("Market is closed. Running ensemble cycle anyway for testing...")
-        results = run_ensemble_cycle()
-        print(f"\nEnsemble Results ({len(results)} agents)")
-        print("=" * 60)
-        for r in results:
-            print(
-                f"  [{r.get('agent', '?')}] {r.get('action', '?')} "
-                f"conf={r.get('confidence', 0):.2f} "
-                f"value=${r.get('portfolio_value', 0):.2f} "
-                f"({r.get('execution', '?')})"
-            )
-        print()
-        return
-    elif args.leaderboard:
-        from .comparison import generate_leaderboard
-        lb = generate_leaderboard()
-        if not lb:
-            print("No agent data yet. Run --ensemble first.")
-        else:
-            print(f"\nAgent Leaderboard")
-            print("=" * 70)
-            print(f"{'#':<4} {'Agent':<25} {'Return':>8} {'Trades':>7} {'Win%':>6} {'Sharpe':>7} {'MaxDD':>7}")
-            print("-" * 70)
-            for m in lb:
-                print(
-                    f"{m['rank']:<4} {m['display_name']:<25} "
-                    f"{m['total_pnl_pct']:>+7.2f}% {m['total_trades']:>7} "
-                    f"{m['win_rate']:>5.0f}% {m['sharpe_ratio']:>7.3f} "
-                    f"{m['max_drawdown_pct']:>6.1f}%"
-                )
-        print()
-        return
-    elif args.explain_trade:
-        _explain_trade(args.explain_trade)
-        return
-    elif args.milestones:
-        milestones = load_json(DATA_DIR / "milestones.json", default=[])
-        if milestones:
-            print(f"\nTriggered Milestones ({len(milestones)})")
-            print("=" * 60)
-            for m in milestones:
-                print(f"  [{m.get('severity', 'info')}] {m.get('milestone_id', '?')}")
-                print(f"    {m.get('message', '')[:100]}")
-                print(f"    Triggered: {m.get('triggered_at', '?')}")
-        else:
-            print("\nNo milestones triggered yet.")
-        print()
-        return
-    elif args.graduation_report:
-        try:
-            from .benchmarks import BenchmarkTracker
-            portfolio = load_portfolio()
-            bt = BenchmarkTracker()
-            comparison = bt.get_comparison(portfolio["total_value"])
-            grad = comparison.get("graduation_criteria", {})
-            print(f"\nGraduation Report")
-            print("=" * 60)
-            passed = 0
-            total = 0
-            for name, criteria in grad.items():
-                total += 1
-                icon = "PASS" if criteria.get("passed") else "FAIL"
-                if criteria.get("passed"):
-                    passed += 1
-                print(f"  [{icon}] {name}: {criteria.get('actual', '?')} (required: {criteria.get('required', '?')})")
-            print(f"\n  {passed}/{total} criteria met")
-        except Exception as e:
-            print(f"Graduation report error: {e}")
-        print()
-        return
-    elif args.debug_traces:
-        from .utils import LOGS_DIR
-        traces_dir = LOGS_DIR / "traces"
-        if not traces_dir.exists():
-            print("No traces directory yet. Run a trading cycle first.")
-            return
-        # Find the latest trace files
-        trace_files = sorted(traces_dir.rglob("trace_*.json"), reverse=True)
-        n = args.debug_traces
-        if not trace_files:
-            print("No traces found.")
-        else:
-            print(f"\nLatest {min(n, len(trace_files))} Decision Traces")
-            print("=" * 60)
-            for tf in trace_files[:n]:
-                trace = load_json(tf)
-                print(f"\n  File: {tf.name}")
-                print(f"  Time: {trace.get('timestamp', '?')}")
-                print(f"  Action: {trace.get('decision', {}).get('action', '?')}")
-                print(f"  Confidence: {trace.get('decision', {}).get('confidence', 0):.2f}")
-                regime = trace.get('regime', {})
-                print(f"  Regime: {regime.get('trend', '?')}/{regime.get('volatility', '?')}")
-                anomalies = trace.get('anomalies', [])
-                if anomalies:
-                    print(f"  Anomalies: {', '.join(str(a) for a in anomalies)}")
-        print()
-        return
-    elif args.influence_report:
-        scores = get_strategy_scores()
-        transactions = load_portfolio()
-        print(f"\nStrategy Influence Report")
-        print("=" * 60)
-        for name, s in scores.get("strategies", {}).items():
-            pnl = s.get("total_pnl", 0)
-            trades = s.get("total_trades", 0)
-            wr = s.get("win_rate", 0) * 100
-            trend = s.get("trend", "neutral")
-            print(f"  {name:20s} weight={s['weight']:.3f} trades={trades:3d} "
-                  f"win_rate={wr:5.1f}% pnl=${pnl:+.2f} trend={trend}")
-        print()
-        # Show current portfolio allocation
-        portfolio = load_portfolio()
-        print("Portfolio Allocation")
-        print("-" * 40)
-        for ticker, h in portfolio.get("holdings", {}).items():
-            if h.get("shares", 0) > 0:
-                value = h["shares"] * h.get("current_price", 0)
-                pct = (value / portfolio["total_value"] * 100) if portfolio["total_value"] > 0 else 0
-                print(f"  {ticker}: {h['shares']:.4f} shares (${value:.2f}, {pct:.1f}%)")
-        cash_pct = (portfolio["cash"] / portfolio["total_value"] * 100) if portfolio["total_value"] > 0 else 0
-        print(f"  Cash: ${portfolio['cash']:.2f} ({cash_pct:.1f}%)")
-        print()
-        return
-    elif args.replay or args.practice:
-        from .replay import ReplayEngine, SCENARIOS
-        obfuscate = not args.no_obfuscate
-        if args.practice:
-            if args.practice not in SCENARIOS:
-                print(f"Unknown scenario: {args.practice}")
-                print(f"Available: {', '.join(SCENARIOS.keys())}")
-                return
-            engine = ReplayEngine(scenario=args.practice, obfuscate=obfuscate)
-        else:
-            engine = ReplayEngine(year=args.replay, obfuscate=obfuscate)
-        asyncio.run(engine.run())
-        return
-    elif args.purge_replay_lessons:
-        from .knowledge_base import purge_replay_lessons
-        session = None if args.purge_replay_lessons == "ALL" else args.purge_replay_lessons
-        removed = purge_replay_lessons(session)
-        tag = f" from session {session}" if session else ""
-        print(f"Purged {removed} replay lessons{tag}.")
-        return
-    elif args.disable_lesson:
-        from .knowledge_base import disable_lesson
-        ok = disable_lesson(args.disable_lesson)
-        print(f"{'Disabled' if ok else 'Not found'}: {args.disable_lesson}")
-        return
-    elif args.enable_lesson:
-        from .knowledge_base import enable_lesson
-        ok = enable_lesson(args.enable_lesson)
-        print(f"{'Enabled' if ok else 'Not found'}: {args.enable_lesson}")
-        return
-    elif args.backtest:
-        from .backtest import WalkForwardBacktest
-        bt = WalkForwardBacktest()
-        bt.run_all()
-        return
-    elif args.health:
-        try:
-            from .observability import HealthChecker
-            health = HealthChecker().check()
-            print("\nSystem Health")
-            print("=" * 40)
-            for component, status in health.get("components", {}).items():
-                icon = "OK" if status.get("healthy") else "FAIL"
-                print(f"  [{icon}] {component}: {status.get('detail', '')}")
-            print()
-        except ImportError:
-            print("Observability module not yet available")
-        return
-    elif args.alerts:
-        from .utils import load_json, LOGS_DIR
-        alerts = load_json(LOGS_DIR / "alerts.json", default=[])
-        active = [a for a in alerts if a.get("status") == "active"]
-        if active:
-            print(f"\nActive Alerts ({len(active)})")
-            print("=" * 50)
-            for a in active:
-                print(f"  [{a.get('severity', '?')}] {a.get('type', '?')}: {a.get('message', '')}")
-        else:
-            print("\nNo active alerts.")
-        print()
-        return
-    elif args.bootstrap:
-        asyncio.run(bootstrap())
-    elif args.once:
-        run_once()
-    elif args.research:
-        asyncio.run(run_daily_research())
-    elif args.learn:
-        config = load_config()
-        current = get_current_price(config["ticker"])
-        portfolio = load_portfolio()
-        asyncio.run(run_learning_cycle(current["price"], portfolio))
-    elif args.report:
-        from .reporter import generate_dashboard_data
-        generate_dashboard_data()
-        _print_status()
-        print(f"  Dashboard: dashboard/index.html")
-    elif args.status:
-        _print_status()
-    else:
-        # Full scheduler mode
-        if not _is_bootstrapped():
-            logger.info("First run detected — running bootstrap...")
-            asyncio.run(bootstrap())
-        run_scheduler()
-
-
-def _explain_trade(txn_id: str):
-    """Print detailed explanation of a specific trade."""
-    from .portfolio import load_transactions
-    transactions = load_transactions()
-    txn = next((t for t in transactions if t["id"] == txn_id), None)
-
-    if not txn:
-        # Also search agent transactions
-        from .ensemble import list_agents, load_agent_transactions
-        for name in list_agents():
-            agent_txns = load_agent_transactions(name)
-            txn = next((t for t in agent_txns if t["id"] == txn_id), None)
-            if txn:
-                print(f"(Found in agent: {name})")
-                break
-
-    if not txn:
-        print(f"Trade {txn_id} not found.")
-        return
-
-    print(f"\nTrade Explanation: {txn_id}")
-    print("=" * 60)
-    print(f"  Time:       {txn.get('timestamp', '?')}")
-    print(f"  Action:     {txn.get('action', '?')} {txn.get('shares', 0):.4f} shares @ ${txn.get('price', 0):.2f}")
-    print(f"  Strategy:   {txn.get('strategy', '?')}")
-    print(f"  Confidence: {txn.get('confidence', 0):.2f}")
-    print(f"  Hypothesis: {txn.get('hypothesis', 'N/A')}")
-    print(f"  Reasoning:  {txn.get('reasoning', 'N/A')}")
-    if txn.get("realized_pnl") is not None:
-        print(f"  P&L:        ${txn['realized_pnl']:.2f}")
-    if txn.get("review"):
-        print(f"  Review:     {txn['review']}")
-    print()
-
-
-def _print_status():
-    """Print a comprehensive status report."""
-    config = load_config()
-    ticker = config["ticker"]
-
-    try:
-        current = get_current_price(ticker)
-        price = current["price"]
-    except Exception:
-        price = 0
-        print("(Could not fetch live price)")
-
-    portfolio = load_portfolio()
-    if price > 0:
-        portfolio = update_market_price(portfolio, ticker, price)
-    summary = get_portfolio_summary()
-
-    print()
-    print("MonopolyTrader Status")
-    print("=" * 50)
-    print(f"  {ticker}: {format_currency(price) if price else 'N/A'}")
-    print(f"  Market: {'OPEN' if is_market_open() else 'CLOSED'}")
-    print()
-    print("Portfolio")
-    print("-" * 50)
-    print(f"  Cash:       {format_currency(summary['cash'])}")
-    holdings = summary.get("holdings", {}).get(ticker, {})
-    if holdings.get("shares", 0) > 0:
-        print(f"  {ticker}:      {holdings['shares']:.4f} shares @ avg ${holdings['avg_cost_basis']:.2f}")
-        print(f"  Position:   {format_currency(holdings['shares'] * holdings['current_price'])}")
-        print(f"  Unrealized: {format_currency(holdings['unrealized_pnl'])}")
-    else:
-        print(f"  {ticker}:      No position")
-    print(f"  Total:      {format_currency(summary['total_value'])}")
-    print(f"  P&L:        {format_currency(summary['total_pnl'])} ({format_pct(summary['total_pnl_pct'])})")
-    print(f"  Trades:     {summary['total_trades']} (W:{summary['winning_trades']} L:{summary['losing_trades']})")
-    print(f"  Win Rate:   {summary['win_rate']}%")
-    print()
-    print("Knowledge")
-    print("-" * 50)
-    print(f"  {get_knowledge_summary()}")
-
-    scores = get_strategy_scores()
-    print()
-    print("Strategies")
-    print("-" * 50)
-    for name, s in scores.get("strategies", {}).items():
-        bar = "#" * int(s["weight"] * 50)
-        print(f"  {name:18s} {s['weight']:.2f} {bar}")
-
-    print()
+    logger.info("MonopolyTrader v4 stopped")
 
 
 if __name__ == "__main__":

@@ -1,26 +1,26 @@
-"""Market data service — price fetching, technical indicators, macro regime."""
+"""Market data service — price fetching, technical indicators, macro regime.
+
+v4: Added get_world_snapshot() for macro + EV peer context.
+    Removed: check_macro_gate, get_bsm_signals, check_volume_spike, check_vix_change.
+    Claude evaluates macro conditions directly from raw data.
+"""
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import ta
-from datetime import datetime, timedelta
+from datetime import datetime
 from .utils import load_config, setup_logging
 
 logger = setup_logging("market_data")
 
 
 def get_current_price(ticker: str) -> dict:
-    """Fetch current/latest price data for a ticker.
-
-    Uses 1-min bars for the latest price, but supplements with daily
-    volume data since per-minute volume is often 0 for individual bars.
-    """
+    """Fetch current/latest price data for a ticker."""
     stock = yf.Ticker(ticker)
     hist = stock.history(period="2d", interval="1m")
     using_daily = False
     if hist.empty:
-        # Fallback to daily if intraday unavailable (market closed)
         hist = stock.history(period="5d")
         using_daily = True
         if hist.empty:
@@ -31,7 +31,6 @@ def get_current_price(ticker: str) -> dict:
     change = latest["Close"] - prev_close
     change_pct = (change / prev_close) * 100 if prev_close else 0
 
-    # Get daily volume (more reliable than per-minute volume which is often 0)
     daily_volume = int(latest["Volume"])
     if not using_daily:
         try:
@@ -72,11 +71,7 @@ def get_intraday(ticker: str, interval: str = "5m") -> pd.DataFrame:
 
 
 def calculate_indicators(df: pd.DataFrame) -> dict:
-    """Calculate technical indicators from an OHLCV DataFrame.
-
-    Expects columns: Open, High, Low, Close, Volume.
-    Returns a dict of the latest indicator values.
-    """
+    """Calculate technical indicators from an OHLCV DataFrame."""
     if len(df) < 50:
         logger.warning(f"Only {len(df)} rows — some indicators may be NaN")
 
@@ -106,7 +101,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     indicators["macd_signal"] = macd_sig
     indicators["macd_histogram"] = macd_hist
 
-    # Determine MACD crossover state
+    # MACD crossover state
     macd_series = macd_ind.macd_diff()
     if len(macd_series) >= 2 and pd.notna(macd_series.iloc[-1]) and pd.notna(macd_series.iloc[-2]):
         prev_hist = macd_series.iloc[-2]
@@ -130,13 +125,12 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     atr = ta.volatility.AverageTrueRange(high, low, close, window=14)
     indicators["atr"] = _last(atr.average_true_range())
 
-    # ADX (Average Directional Index) — trend strength indicator
-    # Needs at least 2*window rows to compute (14-day ADX needs ~28 bars)
+    # ADX
     if len(df) >= 28:
         adx_ind = ta.trend.ADXIndicator(high, low, close, window=14)
         indicators["adx"] = _last(adx_ind.adx())
-        indicators["adx_pos"] = _last(adx_ind.adx_pos())  # +DI
-        indicators["adx_neg"] = _last(adx_ind.adx_neg())  # -DI
+        indicators["adx_pos"] = _last(adx_ind.adx_pos())
+        indicators["adx_neg"] = _last(adx_ind.adx_neg())
     else:
         indicators["adx"] = None
         indicators["adx_pos"] = None
@@ -184,20 +178,7 @@ def get_macro_data() -> dict:
 def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> dict:
     """Classify market regime using TSLA ADX + SPY slope + VIX.
 
-    Two-axis classification:
-      - Directional: trending vs range-bound (ADX-based, with hysteresis)
-      - Volatility: low / normal / high (VIX-based)
-
-    Also preserves legacy trend (bull/bear/sideways) for backward compat.
-
-    Returns: {
-        trend: bull|bear|sideways,  # legacy — SPY slope
-        directional: trending|range_bound,  # NEW — ADX-based
-        volatility: low|normal|high,
-        vix: float,
-        adx: float,
-        strategy_mode: str,  # "mean_reversion" or "momentum" — recommended primary
-    }
+    v4: Simplified — no hysteresis file saving. Returns regime dict directly.
     """
     regime = {
         "trend": "sideways", "directional": "range_bound",
@@ -211,7 +192,6 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     vix = macro_data.get("vix_level", 0)
     regime["vix"] = vix
 
-    # VIX terciles
     if vix < 20:
         regime["volatility"] = "low"
     elif vix < 30:
@@ -219,8 +199,7 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     else:
         regime["volatility"] = "high"
 
-    # ADX-based directional classification from TSLA daily data
-    adx_value = None
+    # ADX-based directional classification
     if daily_df is not None and len(daily_df) >= 30:
         try:
             adx_ind = ta.trend.ADXIndicator(
@@ -231,22 +210,16 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
                 adx_value = float(adx_series.iloc[-1])
                 regime["adx"] = round(adx_value, 2)
 
-                # Hysteresis: use 3-day average ADX to prevent whipsaw
                 adx_avg_3 = float(adx_series.tail(3).mean())
                 regime["adx_avg_3d"] = round(adx_avg_3, 2)
 
-                # Trending: ADX avg > 25; Range-bound: ADX avg < 20
-                # Between 20-25 is a dead zone — keep previous classification
                 if adx_avg_3 >= 25:
                     regime["directional"] = "trending"
                 elif adx_avg_3 <= 20:
                     regime["directional"] = "range_bound"
-                else:
-                    # Dead zone — load previous regime if available
-                    prev_regime = _load_previous_regime()
-                    regime["directional"] = prev_regime.get("directional", "range_bound")
+                # 20-25 dead zone: default to range_bound
 
-                # +DI vs -DI for trend direction within trending regime
+                # +DI vs -DI
                 di_pos = adx_ind.adx_pos().dropna()
                 di_neg = adx_ind.adx_neg().dropna()
                 if len(di_pos) > 0 and len(di_neg) > 0:
@@ -255,7 +228,7 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
         except Exception as e:
             logger.warning(f"ADX calculation failed: {e}")
 
-    # SPY 50-day slope for legacy trend classification
+    # SPY 50-day slope for trend classification
     try:
         spy = yf.Ticker("SPY")
         spy_hist = spy.history(period="3mo", interval="1d")
@@ -277,14 +250,11 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     except Exception as e:
         logger.warning(f"SPY trend classification failed: {e}")
 
-    # Strategy mode recommendation based on regime
+    # Strategy mode recommendation
     if regime["directional"] == "trending":
         regime["strategy_mode"] = "momentum"
     else:
         regime["strategy_mode"] = "mean_reversion"
-
-    # Save regime for hysteresis on next cycle
-    _save_current_regime(regime)
 
     logger.info(
         f"Regime: {regime['directional']} (ADX={regime['adx']:.1f}) "
@@ -293,64 +263,13 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     return regime
 
 
-def _load_previous_regime() -> dict:
-    """Load the previous regime classification for hysteresis."""
-    from .utils import KNOWLEDGE_DIR, load_json
-    return load_json(KNOWLEDGE_DIR / "current_regime.json", default={})
-
-
-def _save_current_regime(regime: dict) -> None:
-    """Save current regime for hysteresis on next cycle."""
-    from .utils import KNOWLEDGE_DIR, save_json
-    save_json(KNOWLEDGE_DIR / "current_regime.json", regime)
-
-
-def check_macro_gate(config: dict = None) -> dict:
-    """Check if macro conditions require elevated conviction thresholds.
-
-    Returns: {gate_active: bool, reason: str, confidence_threshold_override: float|None}
-    """
-    if config is None:
-        config = load_config()
-
-    gate_config = config.get("risk_params", {}).get("macro_gate", {})
-    spy_threshold = gate_config.get("spy_daily_drop_threshold", -0.02)
-    vix_threshold = gate_config.get("vix_threshold", 30)
-    elevated_conf = gate_config.get("elevated_confidence_required", 0.80)
-
-    macro = get_macro_data()
-    reasons = []
-
-    if macro["spy_change_pct"] <= spy_threshold:
-        reasons.append(f"SPY down {macro['spy_change_pct']*100:.1f}% (threshold: {spy_threshold*100:.0f}%)")
-
-    if macro["vix_level"] >= vix_threshold:
-        reasons.append(f"VIX at {macro['vix_level']:.1f} (threshold: {vix_threshold})")
-
-    gate_active = len(reasons) > 0
-    result = {
-        "gate_active": gate_active,
-        "reason": "; ".join(reasons) if reasons else "Macro conditions normal",
-        "confidence_threshold_override": elevated_conf if gate_active else None,
-        "spy_change_pct": macro["spy_change_pct"],
-        "vix_level": macro["vix_level"],
-    }
-
-    if gate_active:
-        logger.warning(f"MACRO GATE ACTIVE: {result['reason']}")
-
-    return result
-
-
 def get_market_summary(ticker: str) -> dict:
     """Bundle current price + indicators + macro regime into one payload."""
     current = get_current_price(ticker)
 
-    # Daily data for longer-term indicators
     daily = get_price_history(ticker, period="3mo", interval="1d")
     daily_indicators = calculate_indicators(daily)
 
-    # Intraday for short-term context
     try:
         intraday = get_intraday(ticker, interval="5m")
         intraday_indicators = calculate_indicators(intraday)
@@ -360,7 +279,6 @@ def get_market_summary(ticker: str) -> dict:
         intraday_indicators = {}
         has_intraday = False
 
-    # Recent daily candles (last 5 days) as context
     recent_days = []
     for i in range(-min(5, len(daily)), 0):
         row = daily.iloc[i]
@@ -373,7 +291,6 @@ def get_market_summary(ticker: str) -> dict:
             "volume": int(row["Volume"]),
         })
 
-    # Macro regime data
     try:
         macro = get_macro_data()
         regime = classify_regime(macro, daily)
@@ -394,105 +311,63 @@ def get_market_summary(ticker: str) -> dict:
     }
 
 
-def get_bsm_signals(signal_path: str = None) -> list[dict]:
-    """Read latest BSM (Billionaire Signal Monitor) signals if available.
+def get_world_snapshot(config: dict = None) -> dict:
+    """Fetch macro instruments + EV peers for world context.
 
-    Returns empty list if BSM not built yet or no signals present.
-    Gracefully no-ops when BSM directory doesn't exist.
+    v4 addition: gives Claude full awareness of macro environment
+    and competitor movements every cycle.
     """
-    if signal_path is None:
+    if config is None:
         config = load_config()
-        bsm_config = config.get("bsm", {})
-        if not bsm_config.get("enabled", False):
-            return []
-        signal_path = bsm_config.get("signal_path", "data/bsm_signals/latest_signals.json")
 
-    from pathlib import Path
-    path = Path(signal_path)
-    if not path.exists():
-        return []
+    world_tickers = config.get("world_tickers", {})
+    macro_tickers = world_tickers.get("macro", [])
+    peer_tickers = world_tickers.get("ev_peers", [])
 
-    try:
-        import json
-        with open(path) as f:
-            signals = json.load(f)
+    NAMES = {
+        "^TNX": "10Y Treasury Yield",
+        "CL=F": "Crude Oil WTI",
+        "BTC-USD": "Bitcoin",
+        "^IXIC": "NASDAQ Composite",
+        "DX-Y.NYB": "US Dollar Index",
+        "SPY": "S&P 500 ETF",
+        "^VIX": "VIX Volatility",
+    }
 
-        if not isinstance(signals, list):
-            signals = [signals]
+    result = {"macro": {}, "ev_peers": {}, "fetched_at": str(datetime.utcnow())}
 
-        # Filter expired signals
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        active = []
-        for sig in signals:
-            expires = sig.get("expires_at")
-            if expires:
-                try:
-                    exp_dt = datetime.fromisoformat(expires)
-                    if exp_dt < now:
-                        continue
-                except (ValueError, TypeError):
-                    pass
-            active.append(sig)
+    for ticker in macro_tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="5d", interval="1d")
+            if len(hist) >= 2:
+                curr = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change_pct = round((curr - prev) / prev * 100, 2)
+                result["macro"][ticker] = {
+                    "price": round(curr, 2),
+                    "change_pct": change_pct,
+                    "name": NAMES.get(ticker, ticker),
+                }
+        except Exception as e:
+            logger.warning(f"World snapshot {ticker}: {e}")
 
-        if active:
-            logger.info(f"BSM: {len(active)} active signals loaded")
-        return active
-    except Exception as e:
-        logger.warning(f"BSM signal read failed: {e}")
-        return []
+    for ticker in peer_tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="5d", interval="1d")
+            if len(hist) >= 2:
+                curr = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change_pct = round((curr - prev) / prev * 100, 2)
+                result["ev_peers"][ticker] = {
+                    "price": round(curr, 2),
+                    "change_pct": change_pct,
+                }
+        except Exception as e:
+            logger.warning(f"World snapshot {ticker}: {e}")
 
-
-def check_volume_spike(ticker: str = "TSLA") -> dict:
-    """Compare current volume to 20-day average. Returns ratio and spike status.
-
-    Used by the event trigger system to detect unusual activity.
-    """
-    try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1mo", interval="1d")
-        if len(hist) < 5:
-            return {"ratio": 1.0, "is_spike": False, "current": 0, "avg_20d": 0}
-
-        current_vol = int(hist["Volume"].iloc[-1])
-        avg_vol = float(hist["Volume"].tail(20).mean())
-        ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else 1.0
-
-        return {
-            "ratio": ratio,
-            "is_spike": ratio >= 2.0,
-            "current": current_vol,
-            "avg_20d": int(avg_vol),
-        }
-    except Exception as e:
-        logger.warning(f"Volume spike check failed: {e}")
-        return {"ratio": 1.0, "is_spike": False, "current": 0, "avg_20d": 0}
-
-
-def check_vix_change() -> dict:
-    """Check VIX change over the last session. Returns points moved.
-
-    Used by the event trigger system for VIX spike detection.
-    """
-    try:
-        vix = yf.Ticker("^VIX")
-        hist = vix.history(period="5d", interval="1d")
-        if len(hist) < 2:
-            return {"change": 0.0, "current": 0.0, "is_spike": False}
-
-        current = float(hist["Close"].iloc[-1])
-        previous = float(hist["Close"].iloc[-2])
-        change = round(current - previous, 2)
-
-        return {
-            "change": change,
-            "current": round(current, 2),
-            "previous": round(previous, 2),
-            "is_spike": abs(change) >= 3.0,
-        }
-    except Exception as e:
-        logger.warning(f"VIX change check failed: {e}")
-        return {"change": 0.0, "current": 0.0, "is_spike": False}
+    return result
 
 
 def _last(series: pd.Series) -> float | None:

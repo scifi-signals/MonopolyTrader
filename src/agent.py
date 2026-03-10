@@ -1,401 +1,224 @@
-"""AI decision engine — Claude-powered trading brain.
+"""AI decision engine — Claude IS the trading brain.
 
-v2: Two-phase Analyst/Trader architecture for thesis-driven trading.
-v1 functions (make_decision, make_decision_multi_step) kept for ensemble/replay compatibility.
+v4: No coded strategies. No signal aggregation. No thesis system.
+Raw market data + world context + trade journal → Claude reasons → Claude decides.
 """
 
 import json
-import os
-import yfinance as yf
-from anthropic import Anthropic
-from .utils import load_config, format_currency, iso_now, setup_logging, call_ai_with_fallback
-from .knowledge_base import get_relevant_knowledge, get_relevant_research, add_prediction
-from .market_data import get_bsm_signals
-from .strategies import StrategySignal, calculate_signal_balance
+from .utils import (
+    load_config, format_currency, iso_now, setup_logging,
+    call_ai_with_fallback,
+)
+from .journal import get_recent_entries, format_journal_for_brief
 from .news_feed import NewsFeed, format_news_for_prompt
-from .thesis import Thesis, load_thesis, save_thesis, thesis_changed_meaningfully
+from .web_search import format_search_results
 
 logger = setup_logging("agent")
 
-SYSTEM_PROMPT = """You are MonopolyTrader, an AI trading agent managing a virtual portfolio of Monopoly dollars. You are LEARNING — you started with $1,000 and your goal is to grow it by getting better at predicting TSLA's movements over time.
 
-You have a knowledge base of lessons from past trades, patterns you've discovered, and research you've conducted. USE THIS KNOWLEDGE. Reference specific lessons and patterns when making decisions. If you're uncertain, say so — it's better to HOLD than to make a low-conviction trade.
+SYSTEM_PROMPT = """You are MonopolyTrader v4, an AI trader managing $1,000 of Monopoly dollars on TSLA. This is paper money — your job is to LEARN by trading aggressively. Every scenario is an opportunity. No fear.
 
-Every trade is a hypothesis. State clearly what you predict will happen and why. You will be reviewed on this prediction later.
+You receive a market brief every 15 minutes during market hours. You see raw indicators, world context, news, web search results, and your own trade journal with lessons from past trades.
 
-RISK RULES (v3 — you MUST follow these):
-- Max position: 65% of portfolio value (TSLA is too volatile for more)
-- Max single trade: 20% of portfolio value
-- Min cash reserve: 15% of portfolio value
-- Stop loss: dynamic ATR-based (wider stops in high volatility)
-- Position sizing: inverse ATR (wider stop = smaller position, max 2% risk per trade)
-- Cooldown: 15 min between trades
-- If daily loss exceeds 8%, stop trading
-- Macro gate: if SPY down >2% or VIX >30, require confidence >0.80 for BUY
-- Earnings blackout: no new BUY within 48 hours of TSLA earnings
+YOU decide what matters. YOU interpret the indicators. YOU size the position. There are no coded strategies telling you what to think.
 
-When deciding trade size, be conservative early on. The system will cap your shares based on ATR sizing. Small positions let you learn without blowing up.
+RULES (only 3):
+1. Max 50% of portfolio value in any position
+2. Keep $100 cash minimum
+3. Fractional shares OK
 
-PREDICTION TRACK RECORD: Your prediction accuracy is shown in the knowledge section. Use it. If a strategy has >60% accuracy, weight your confidence higher on trades using it. If a strategy is below 45%, reduce confidence on those predictions. Don't make high-confidence predictions using strategies where your track record is poor.
+NO STOP LOSSES. If your position is underwater, you evaluate it with context every cycle:
+- Why is it falling? Broad market or TSLA-specific?
+- Is the thesis that led to the buy still valid?
+- Should you buy MORE at this lower price, or exit?
+You are never forced out. You decide.
 
-Be a scientific instrument, not a storyteller. Base decisions on data, not narratives.
+EVERY SCENARIO IS AN OPPORTUNITY:
+- Stock dropping? Maybe it's oversold — buy the dip
+- Stock flat? Maybe a breakout is coming — position early
+- Stock ripping? Maybe momentum continues — ride it
+- Holding cash? Fine, but only if you genuinely see no setup
+- Underwater position? Evaluate with fresh eyes — average down or cut
 
-SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — they have no opinion. They are NOT disagreeing with active signals. A single strategy at >0.70 confidence with no opposing signals is a clear trade. But if no strategy has a strong signal, HOLD is the correct decision.
+Paper money means you can be WRONG and learn from it. A trade that loses $30 but teaches you something is worth more than sitting in cash for a week learning nothing.
 
-HOLD IS VALID: Holding cash in a declining or choppy market is a legitimate strategy. Do not trade out of guilt or pressure — only trade when signals genuinely support it. A <hold_context> section may appear showing your hold vs trade accuracy. Use it to calibrate, not to panic.
+TRADE JOURNAL: Your last 10 trades and their lessons appear below. These are YOUR lessons from YOUR experience. Use them. If you lost money buying into high RSI, don't do it again. If you made money buying VIX spikes, look for that setup.
 
-Respond ONLY with valid JSON matching this schema:
+Respond ONLY with valid JSON:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "shares": <float, 0 if HOLD>,
   "confidence": <float 0-1>,
-  "strategy": "<primary strategy driving this decision>",
-  "hypothesis": "<I predict TSLA will [direction] by [amount] over [timeframe] because [reasoning]>",
-  "reasoning": "<detailed analysis referencing indicators, signals, and knowledge>",
-  "knowledge_applied": ["<lesson_id — MUST list at least one if lessons were provided>"],
-  "risk_note": "<any risk concerns>",
-  "predictions": {
-    "30min": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>},
-    "2hr": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>},
-    "1day": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>}
-  },
-  "sentiment_score": <float -1 to 1, your read on current news/sentiment>,
-  "hold_analysis": <REQUIRED if action is HOLD, null otherwise> {
-    "opportunity_cost": "<what potential gain are you forgoing by not acting?>",
-    "downside_protection": "<what risk are you avoiding by not acting?>",
-    "signal_balance": "<describe the balance of buy vs sell signals>",
-    "decision_boundary": "<what specific change in conditions would flip this to BUY or SELL?>"
-  },
-  "research_request": "<optional — something you want researched before next decision>"
+  "reasoning": "<your complete analysis: what you see in the data, why you're acting or not acting, what you expect to happen>",
+  "risk_note": "<what could go wrong with this trade>"
 }"""
 
 
-def _get_client() -> Anthropic:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        # Try loading from file
-        for path in ["anthropic_api_key.txt", "../anthropic_api_key.txt"]:
-            try:
-                with open(path) as f:
-                    api_key = f.read().strip()
-                    break
-            except FileNotFoundError:
-                continue
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not found in env or key file")
-    return Anthropic(api_key=api_key)
+def build_market_brief(
+    market_data: dict,
+    world: dict,
+    portfolio: dict,
+    news_feed: NewsFeed | None,
+    web_results: list[dict],
+    journal_entries: list[dict],
+    config: dict,
+) -> str:
+    """Build the complete market brief for Claude.
 
-
-def _format_market_data(market_data: dict) -> str:
-    """Format market data for the agent prompt."""
+    This is the single prompt that contains everything Claude needs
+    to make a trading decision.
+    """
     current = market_data.get("current", {})
     daily = market_data.get("daily_indicators", {})
-    intraday = market_data.get("intraday_indicators")
+    intraday = market_data.get("intraday_indicators") or {}
     recent = market_data.get("recent_days", [])
+    regime = market_data.get("regime", {})
+    ticker = config["ticker"]
 
-    parts = [f"Current: ${current.get('price', 'N/A')} ({current.get('change_pct', 0):+.2f}%)"]
+    parts = []
+
+    # === TSLA Price & Indicators ===
+    parts.append(f"=== {ticker} ===")
+    parts.append(f"Price: ${current.get('price', 'N/A')} ({current.get('change_pct', 0):+.2f}%)")
     parts.append(f"Volume: {current.get('volume', 0):,}")
-
-    # Position limits (if provided, e.g. from replay engine)
-    limits = market_data.get("position_limits")
-    if limits:
-        parts.append(f">>> MAX TRADE: ${limits['max_trade_value']:.2f} = {limits['max_shares_at_current_price']:.4f} shares at current price. DO NOT exceed this. <<<")
-
     parts.append("")
 
     parts.append("Daily Indicators:")
-    for key in ["rsi_14", "sma_20", "sma_50", "macd", "macd_signal", "macd_crossover",
-                 "bollinger_upper", "bollinger_lower", "atr"]:
+    indicator_keys = [
+        "rsi_14", "sma_20", "sma_50",
+        "macd", "macd_signal", "macd_histogram", "macd_crossover",
+        "bollinger_upper", "bollinger_lower", "bollinger_mid",
+        "atr", "adx", "adx_pos", "adx_neg",
+        "ema_12", "ema_26", "volume_sma_20", "obv",
+    ]
+    for key in indicator_keys:
         val = daily.get(key)
         if val is not None:
             parts.append(f"  {key}: {val}")
 
     if intraday and intraday.get("current_price"):
         parts.append("")
-        parts.append("Intraday Indicators:")
-        for key in ["rsi_14", "sma_20", "macd_crossover"]:
+        parts.append("Intraday (5min) Indicators:")
+        for key in ["rsi_14", "sma_20", "macd_crossover", "bollinger_upper", "bollinger_lower"]:
             val = intraday.get(key)
             if val is not None:
                 parts.append(f"  {key}: {val}")
 
     if recent:
         parts.append("")
-        parts.append("Recent Days:")
+        parts.append("Last 5 Days:")
         for day in recent:
-            parts.append(f"  {day['date']}: O={day['open']} H={day['high']} L={day['low']} C={day['close']} V={day['volume']:,}")
+            parts.append(
+                f"  {day['date']}: O={day['open']} H={day['high']} "
+                f"L={day['low']} C={day['close']} V={day['volume']:,}"
+            )
 
-    return "\n".join(parts)
-
-
-def _format_signals(signals: list[StrategySignal], aggregate: StrategySignal) -> str:
-    """Format strategy signals for the agent prompt, including signal balance."""
-    parts = ["Individual Signals:"]
-    for s in signals:
-        parts.append(f"  [{s.strategy}] {s.action} confidence={s.confidence:.2f} weight={s.weight:.2f}")
-        parts.append(f"    {s.reasoning}")
-
+    # === World Context ===
     parts.append("")
-    parts.append(f"Aggregate: {aggregate.action} confidence={aggregate.confidence:.2f}")
-    parts.append(f"  {aggregate.reasoning}")
+    parts.append("=== WORLD ===")
 
-    # Add signal balance analysis
-    balance = calculate_signal_balance(signals)
+    macro = world.get("macro", {})
+    if macro:
+        parts.append("Macro:")
+        for sym, data in macro.items():
+            name = data.get("name", sym)
+            parts.append(f"  {name} ({sym}): {data['price']} ({data['change_pct']:+.2f}%)")
+
+    peers = world.get("ev_peers", {})
+    if peers:
+        parts.append("EV Peers:")
+        for sym, data in peers.items():
+            parts.append(f"  {sym}: ${data['price']} ({data['change_pct']:+.2f}%)")
+
+    if regime:
+        parts.append("")
+        parts.append(f"Regime: trend={regime.get('trend','?')} directional={regime.get('directional','?')} "
+                     f"volatility={regime.get('volatility','?')} VIX={regime.get('vix',0):.1f} "
+                     f"ADX={regime.get('adx',0):.1f}")
+
+    # === News ===
     parts.append("")
-    parts.append(f"Signal Balance: {balance['balance']:+.4f} "
-                 f"(buy_pressure={balance['buy_pressure']:.3f}, sell_pressure={balance['sell_pressure']:.3f})")
-    for name, b in balance["breakdown"].items():
-        parts.append(f"  {name}: {b['action']} contribution={b['contribution']:+.4f}")
+    parts.append("=== NEWS ===")
+    if news_feed and news_feed.items:
+        parts.append(format_news_for_prompt(news_feed, max_items=10))
+    else:
+        parts.append("No news available.")
 
-    return "\n".join(parts)
+    # === Web Search ===
+    if web_results:
+        parts.append("")
+        parts.append("=== WEB SEARCH (last 24h) ===")
+        parts.append(format_search_results(web_results))
 
-
-def _format_portfolio(portfolio: dict) -> str:
-    """Format portfolio state for the agent prompt."""
-    parts = [
-        f"Cash: {format_currency(portfolio.get('cash', 0))}",
-        f"Total Value: {format_currency(portfolio.get('total_value', 0))}",
-        f"P&L: {format_currency(portfolio.get('total_pnl', 0))} ({portfolio.get('total_pnl_pct', 0):+.2f}%)",
-        f"Trades: {portfolio.get('total_trades', 0)} (W:{portfolio.get('winning_trades', 0)} L:{portfolio.get('losing_trades', 0)})",
-    ]
+    # === Portfolio ===
+    parts.append("")
+    parts.append("=== PORTFOLIO ===")
+    parts.append(f"Cash: {format_currency(portfolio.get('cash', 0))}")
+    parts.append(f"Total Value: {format_currency(portfolio.get('total_value', 0))}")
+    parts.append(f"P&L: {format_currency(portfolio.get('total_pnl', 0))} ({portfolio.get('total_pnl_pct', 0):+.2f}%)")
+    parts.append(f"Trades: {portfolio.get('total_trades', 0)} (W:{portfolio.get('winning_trades', 0)} L:{portfolio.get('losing_trades', 0)})")
 
     holdings = portfolio.get("holdings", {})
-    for ticker, h in holdings.items():
-        if h.get("shares", 0) > 0:
-            parts.append(f"Holding: {h['shares']:.4f} {ticker} @ avg ${h['avg_cost_basis']:.2f} "
-                        f"(current ${h['current_price']:.2f}, PnL {format_currency(h['unrealized_pnl'])})")
-        else:
-            parts.append(f"Holding: No {ticker} position")
-
-    return "\n".join(parts)
-
-
-def _format_knowledge(knowledge: dict) -> str:
-    """Format knowledge bundle for the agent prompt."""
-    parts = []
-
-    lessons = knowledge.get("lessons", [])
-    if lessons:
-        parts.append("Recent Lessons:")
-        for l in lessons[-5:]:
-            parts.append(f"  [{l['id']}] {l.get('lesson', 'N/A')}")
-            if l.get("category"):
-                parts.append(f"    Category: {l['category']}")
-    else:
-        parts.append("No lessons yet — this is early in the learning process.")
-
-    patterns = knowledge.get("patterns", [])
-    if patterns:
-        parts.append("")
-        parts.append("Known Patterns:")
-        for p in patterns:
-            validated = p.get("times_validated", 0)
-            contradicted = p.get("times_contradicted", 0)
-            reliability = p.get("reliability", "N/A")
-            if validated or contradicted:
-                parts.append(f"  [{p['id']}] {p.get('name', 'N/A')} (reliability: {reliability}, validated {validated}x, contradicted {contradicted}x)")
-            else:
-                parts.append(f"  [{p['id']}] {p.get('name', 'N/A')} (reliability: {reliability}, untested)")
-            parts.append(f"    {p.get('description', '')}")
-
-    accuracy = knowledge.get("prediction_accuracy", {})
-    if accuracy.get("scored_predictions", 0) > 0:
-        parts.append("")
-        parts.append("Your Prediction Accuracy:")
-        for horizon, data in accuracy.get("direction_accuracy", {}).items():
-            parts.append(f"  {horizon}: {data['accuracy_pct']}% ({data['correct']}/{data['total']})")
-
-        # Per-strategy accuracy breakdown
-        strat_acc = accuracy.get("strategy_accuracy", {})
-        if strat_acc:
-            parts.append("Accuracy by Strategy:")
-            for strat, data in strat_acc.items():
-                pct = data["accuracy_pct"]
-                label = ""
-                if pct < 45:
-                    label = " — poor track record, low confidence warranted"
-                elif pct >= 60:
-                    label = " — your strongest predictor"
-                parts.append(f"  {strat}: {pct}% ({data['correct']}/{data['total']}){label}")
-    else:
-        parts.append("")
-        parts.append("No scored predictions yet.")
-
-    scores = knowledge.get("strategy_scores", {})
-    active = {k: v for k, v in scores.items() if v.get("total_trades", 0) > 0}
-    if active:
-        parts.append("")
-        parts.append("Strategy Performance:")
-        for name, s in active.items():
-            parts.append(f"  {name}: {s['win_rate']*100:.0f}% win rate, {s['total_trades']} trades, weight={s['weight']:.2f}")
-
-    return "\n".join(parts) if parts else "Knowledge base is empty — first trading session."
-
-
-def _format_bsm_signals(bsm_signals: list[dict]) -> str:
-    """Format BSM (Billionaire Signal Monitor) signals for the agent prompt."""
-    if not bsm_signals:
-        return ""
-    parts = ["Active BSM Signals:"]
-    for sig in bsm_signals:
+    h = holdings.get(ticker, {})
+    if h.get("shares", 0) > 0:
         parts.append(
-            f"  [{sig.get('source_person', 'unknown')}] {sig.get('ticker', '?')} "
-            f"{sig.get('direction', '?')} (strength={sig.get('strength', 0):.2f}, "
-            f"conf={sig.get('confidence', 0):.2f})"
+            f"Position: {h['shares']:.4f} {ticker} @ avg ${h['avg_cost_basis']:.2f} "
+            f"(current ${h['current_price']:.2f}, unrealized {format_currency(h['unrealized_pnl'])})"
         )
-        if sig.get("summary"):
-            parts.append(f"    {sig['summary'][:150]}")
-        if sig.get("time_horizon"):
-            parts.append(f"    Horizon: {sig['time_horizon']}")
+        pnl_pct = ((h['current_price'] - h['avg_cost_basis']) / h['avg_cost_basis'] * 100) if h['avg_cost_basis'] > 0 else 0
+        if pnl_pct < 0:
+            parts.append(f"  >>> UNDERWATER: {pnl_pct:.1f}% loss. Evaluate: exit, hold, or buy more? <<<")
+    else:
+        parts.append("Position: FLAT (all cash)")
+
+    # Position limits for Claude
+    max_position = portfolio.get("total_value", 1000) * config["risk_params"].get("max_position_pct", 0.50)
+    current_holding_value = h.get("shares", 0) * h.get("current_price", 0)
+    available_for_position = max_position - current_holding_value
+    max_buy_value = min(available_for_position, portfolio.get("cash", 0) - config["risk_params"].get("min_cash_reserve", 100))
+    if max_buy_value > 0 and current.get("price", 0) > 0:
+        max_shares = max_buy_value / current["price"]
+        parts.append(f"Max BUY: {max_shares:.4f} shares (${max_buy_value:.2f})")
+    elif h.get("shares", 0) > 0:
+        parts.append(f"Can SELL up to {h['shares']:.4f} shares")
+
+    # === Trade Journal ===
+    parts.append("")
+    parts.append("=== YOUR TRADE JOURNAL (last 10) ===")
+    parts.append(format_journal_for_brief(journal_entries))
+
     return "\n".join(parts)
-
-
-def _fetch_news(ticker: str) -> str:
-    """Fetch recent news headlines for sentiment context."""
-    try:
-        stock = yf.Ticker(ticker)
-        news = stock.news
-        if not news:
-            return "No recent news available."
-        headlines = []
-        for item in news[:8]:
-            content = item.get("content", {})
-            title = content.get("title", item.get("title", ""))
-            provider = content.get("provider", {}).get("displayName", "")
-            if title:
-                headlines.append(f"- {title}" + (f" ({provider})" if provider else ""))
-        return "\n".join(headlines) if headlines else "No recent news available."
-    except Exception as e:
-        logger.warning(f"News fetch failed: {e}")
-        return "News unavailable."
-
-
-def build_hold_streak_warning(hold_streak: dict) -> str:
-    """Build the <hold_context> prompt section from hold streak stats.
-
-    Provides balanced, data-driven context about hold vs trade accuracy.
-    Does NOT pressure the agent to trade — just presents the data.
-    Returns empty string if streak < 3 or hold_streak is None.
-    """
-    if not hold_streak or hold_streak.get("consecutive_holds", 0) < 3:
-        return ""
-    hs = hold_streak
-    section = "\n<hold_context>\n"
-    section += f"You have held for {hs['consecutive_holds']} consecutive decisions.\n"
-    if hs.get("last_trade_hours_ago") is not None:
-        section += f"Last trade was {hs['last_trade_hours_ago']:.0f} hours ago.\n"
-
-    missed = hs.get("recent_missed_gains", 0)
-    correct = hs.get("recent_correct_holds", 0)
-    total_scored = missed + correct
-    if total_scored > 0:
-        section += f"Recent hold scorecard ({total_scored} scored):\n"
-        section += f"  Correct holds: {correct} ({round(correct/total_scored*100)}%)\n"
-        section += f"  Missed gains: {missed} ({round(missed/total_scored*100)}%)\n"
-        if correct >= missed:
-            section += "Your holds have been more right than wrong. Continue holding if signals are weak.\n"
-        elif missed > correct * 1.5 and total_scored >= 10:
-            section += "You are missing some opportunities. Consider acting on strong signals (confidence >0.65).\n"
-
-    section += "Remember: holding cash in a declining market is a winning strategy. Only trade on genuine signals.\n"
-    section += "</hold_context>\n"
-    return section
 
 
 def make_decision(
     market_data: dict,
-    signals: list[StrategySignal],
-    aggregate: StrategySignal,
+    world: dict,
     portfolio: dict,
-    knowledge: dict = None,
-    macro_gate: dict = None,
-    regime: dict = None,
-    agent_config: dict = None,
-    hold_streak: dict = None,
+    news_feed: NewsFeed | None,
+    web_results: list[dict],
+    journal_entries: list[dict],
+    config: dict,
 ) -> dict:
     """Call Claude to make a trading decision.
 
-    Args:
-        agent_config: Optional per-agent personality config (from ensemble).
-            If provided, appends the agent's system_prompt_addon.
-
-    Returns the parsed decision dict with action, shares, hypothesis, etc.
+    One brief, one decision. No multi-step, no analyst/trader split.
     """
-    config = load_config()
-    ticker = config["ticker"]
+    brief = build_market_brief(
+        market_data, world, portfolio, news_feed,
+        web_results, journal_entries, config,
+    )
 
-    if knowledge is None:
-        knowledge = get_relevant_knowledge(market_data)
-
-    # Fetch news for sentiment context
-    news = _fetch_news(ticker)
-
-    # Fetch BSM signals
-    bsm_signals = get_bsm_signals()
-    bsm_section = ""
-    if bsm_signals:
-        bsm_section = f"\n<bsm_signals>\n{_format_bsm_signals(bsm_signals)}\n\nNOTE: If BSM signals are bearish but your technical analysis is bullish, cap position to 10% of portfolio value.\n</bsm_signals>\n"
-
-    # Build macro/regime section
-    macro_section = ""
-    if regime or macro_gate:
-        r = regime or market_data.get("regime", {})
-        mg = macro_gate or {}
-        macro_section = f"""
-<macro_regime>
-Trend: {r.get('trend', 'unknown')} | Volatility: {r.get('volatility', 'unknown')} | VIX: {r.get('vix', 0):.1f}
-SPY Daily Change: {mg.get('spy_change_pct', 0)*100:.2f}%
-Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 'Normal'}
-{('Required confidence for BUY: ' + str(mg.get('confidence_threshold_override', 0.80))) if mg.get('gate_active') else ''}
-</macro_regime>
-"""
-
-    # Build hold streak warning
-    hold_streak_section = build_hold_streak_warning(hold_streak)
-
-    # Build the user prompt
-    max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
-    user_prompt = f"""<market_data>
-{_format_market_data(market_data)}
-</market_data>
-{macro_section}
-<strategy_signals>
-{_format_signals(signals, aggregate)}
-</strategy_signals>
-
-<portfolio>
-{_format_portfolio(portfolio)}
-</portfolio>
-
-<relevant_knowledge>
-{_format_knowledge(knowledge)}
-</relevant_knowledge>
-
-<recent_news>
-{news}
-</recent_news>
-{bsm_section}
-{hold_streak_section}Analyze all data and decide: BUY, SELL, or HOLD.
-If BUY or SELL, specify how many shares (fractional OK, max trade = 20% of portfolio value = {format_currency(max_trade)}).
-Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
-Respond with JSON only."""
-
-    # Build system prompt (with optional agent personality addon)
-    system_prompt = SYSTEM_PROMPT
-    if agent_config and agent_config.get("system_prompt_addon"):
-        agent_name = agent_config.get("display_name", agent_config.get("name", ""))
-        system_prompt += f"\n\nAGENT IDENTITY: {agent_name}\n{agent_config['system_prompt_addon']}"
-
-    logger.info(f"Calling Claude for decision (prompt ~{len(user_prompt)} chars)")
+    logger.info(f"Calling Claude for decision (brief ~{len(brief)} chars)")
 
     try:
         raw, model_used = call_ai_with_fallback(
-            system=system_prompt,
-            user=user_prompt,
-            max_tokens=1500,
+            system=SYSTEM_PROMPT,
+            user=brief,
+            max_tokens=800,
             config=config,
         )
 
-        # Strip markdown code fences if present
+        # Strip code fences
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
             if raw.endswith("```"):
@@ -404,834 +227,37 @@ Respond with JSON only."""
 
         decision = json.loads(raw)
 
+        # Validate required fields
+        action = decision.get("action", "HOLD")
+        if action not in ("BUY", "SELL", "HOLD"):
+            logger.warning(f"Invalid action '{action}', defaulting to HOLD")
+            decision["action"] = "HOLD"
+            decision["shares"] = 0
+
+        if action == "HOLD":
+            decision["shares"] = 0
+
+        decision["_model_version"] = model_used
+
         logger.info(
             f"Decision: {decision.get('action')} "
             f"{decision.get('shares', 0):.4f} shares, "
-            f"confidence={decision.get('confidence', 0):.2f}, "
-            f"strategy={decision.get('strategy', 'N/A')}"
+            f"confidence={decision.get('confidence', 0):.2f}"
         )
-        logger.info(f"Hypothesis: {decision.get('hypothesis', 'N/A')}")
-
-        # Record predictions
-        predictions = decision.get("predictions", {})
-        if predictions and any(predictions.values()):
-            pred_record = {
-                "timestamp": iso_now(),
-                "price_at_prediction": market_data.get("current", {}).get("price", 0),
-                "predictions": predictions,
-                "reasoning": decision.get("hypothesis", ""),
-                "outcomes": {k: None for k in predictions},
-                "linked_trade": None,
-                "model_version": config["anthropic_model"],
-            }
-            saved = add_prediction(pred_record)
-            decision["_prediction_id"] = saved["id"]
-
-        # Validate HOLD decisions include hold_analysis
-        if decision.get("action") == "HOLD":
-            hold_analysis = decision.get("hold_analysis")
-            if not hold_analysis or not isinstance(hold_analysis, dict):
-                logger.warning("HOLD decision missing hold_analysis — adding placeholder")
-                decision["hold_analysis"] = {
-                    "opportunity_cost": decision.get("reasoning", "Not specified"),
-                    "downside_protection": decision.get("risk_note", "Not specified"),
-                    "signal_balance": "Not analyzed",
-                    "decision_boundary": "Not specified",
-                }
-
-        # Pass through sentiment score for strategy tracking
-        decision["_sentiment_score"] = decision.get("sentiment_score")
-        decision["_model_version"] = config["anthropic_model"]
-
-        # BSM conviction cap: if BSM bearish + agent bullish, cap at 10%
-        if bsm_signals and decision.get("action") == "BUY":
-            bearish_bsm = [s for s in bsm_signals if s.get("direction") == "bearish"]
-            if bearish_bsm:
-                current_price = market_data.get("current", {}).get("price", 0)
-                bsm_cap_pct = config.get("risk_params", {}).get("bsm_conviction_cap_pct", 0.10)
-                bsm_max_value = portfolio.get("total_value", 1000) * bsm_cap_pct
-                bsm_max_shares = bsm_max_value / current_price if current_price > 0 else 0
-                if decision.get("shares", 0) > bsm_max_shares:
-                    logger.info(
-                        f"BSM cap: bearish signal conflicts with BUY — "
-                        f"capping {decision['shares']:.4f} to {bsm_max_shares:.4f} shares"
-                    )
-                    decision["shares"] = round(bsm_max_shares, 4)
-                    decision["risk_note"] = (
-                        decision.get("risk_note", "") +
-                        f" [BSM conviction cap applied: {bsm_cap_pct*100:.0f}%]"
-                    )
 
         return decision
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Claude response: {e}\nRaw: {raw[:500]}")
         return {
-            "action": "HOLD",
-            "shares": 0,
-            "confidence": 0,
-            "strategy": "error",
-            "hypothesis": "Failed to parse AI response",
+            "action": "HOLD", "shares": 0, "confidence": 0,
             "reasoning": f"JSON parse error: {e}",
-            "knowledge_applied": [],
             "risk_note": "Defaulting to HOLD due to parse error",
         }
     except Exception as e:
         logger.error(f"Agent decision failed: {e}")
         return {
-            "action": "HOLD",
-            "shares": 0,
-            "confidence": 0,
-            "strategy": "error",
-            "hypothesis": "Agent error — defaulting to HOLD",
-            "reasoning": str(e),
-            "knowledge_applied": [],
-            "risk_note": f"Error: {e}",
+            "action": "HOLD", "shares": 0, "confidence": 0,
+            "reasoning": f"Error: {e}",
+            "risk_note": f"Agent error: {e}",
         }
-
-
-# ─── Multi-Step Reasoning ──────────────────────────────────────────────
-
-ANALYSIS_SYSTEM = """You are the Analysis module of MonopolyTrader. Your job is ONLY to analyze the current market state objectively. Do NOT recommend any action.
-
-Examine the data and produce a structured analysis:
-1. TREND: What is the current price trend? (bullish/bearish/sideways)
-2. MOMENTUM: Is momentum building or fading? Cite specific indicators.
-3. VOLATILITY: How volatile is the current environment? What does ATR say?
-4. SUPPORT/RESISTANCE: Where are the key levels relative to current price?
-5. DIVERGENCES: Any divergences between indicators? (e.g., price up but RSI down)
-6. REGIME: What market regime are we in? How does this affect strategy reliability?
-7. NEWS CONTEXT: What's the news saying? Is it likely priced in already?
-
-Respond with JSON:
-{
-  "trend": "bullish"|"bearish"|"sideways",
-  "trend_strength": <float 0-1>,
-  "momentum": "building"|"fading"|"neutral",
-  "volatility": "low"|"normal"|"high",
-  "key_levels": {"support": <price>, "resistance": <price>},
-  "divergences": ["<list of any divergences found>"],
-  "regime_assessment": "<brief regime description>",
-  "news_impact": "positive"|"negative"|"neutral"|"priced_in",
-  "notable_observations": ["<list of anything unusual or important>"]
-}"""
-
-STRATEGY_SYSTEM = """You are the Strategy module of MonopolyTrader. Given an objective market analysis and the current strategy signals, your job is to determine the optimal action.
-
-Consider:
-1. Do the strategy signals agree with the analysis? If not, which do you trust more?
-2. What is the signal balance telling you? Strong one-sided signals are more convincing.
-3. Is this a high-conviction setup or are you gambling? Be honest.
-4. If HOLD: what is the opportunity cost? What would flip your decision?
-5. What does the knowledge base say about similar setups?
-
-Respond with JSON:
-{
-  "recommended_action": "BUY"|"SELL"|"HOLD",
-  "conviction": <float 0-1>,
-  "primary_strategy": "<which strategy is driving this>",
-  "supporting_strategies": ["<strategies that agree>"],
-  "opposing_strategies": ["<strategies that disagree>"],
-  "key_reasoning": "<2-3 sentence core argument>",
-  "risk_factors": ["<list of risks>"],
-  "hold_justification": <null if not HOLD, otherwise {
-    "opportunity_cost": "<what you're giving up>",
-    "downside_protection": "<what you're avoiding>",
-    "decision_boundary": "<what would change your mind>"
-  }>
-}"""
-
-EXECUTION_SYSTEM = """You are the Execution module of MonopolyTrader. Given a strategy recommendation, market data, and portfolio state, produce the final trade decision with precise sizing and risk management.
-
-Your job:
-1. Validate the strategy recommendation against risk rules
-2. Calculate appropriate position size (conservative, respect ATR sizing)
-3. Set predictions with honest confidence levels
-4. Produce the final JSON decision
-
-RISK RULES (v3 — you MUST follow these):
-- Max position: 65% of portfolio value
-- Max single trade: 20% of portfolio value
-- Min cash reserve: 15% of portfolio value
-- Position sizing: inverse ATR (wider stop = smaller position, max 2% risk per trade)
-- If daily loss exceeds 8%, force HOLD
-
-Respond with the final decision JSON matching the standard schema."""
-
-
-def make_decision_multi_step(
-    market_data: dict,
-    signals: list[StrategySignal],
-    aggregate: StrategySignal,
-    portfolio: dict,
-    knowledge: dict = None,
-    macro_gate: dict = None,
-    regime: dict = None,
-    agent_config: dict = None,
-    hold_streak: dict = None,
-) -> dict:
-    """Three-step reasoning: Analysis → Strategy → Execution.
-
-    Uses separate prompts for each step so reasoning is structured and
-    each step can be independently audited. Falls back to single-step
-    make_decision() on error.
-    """
-    config = load_config()
-    ticker = config["ticker"]
-
-    if knowledge is None:
-        knowledge = get_relevant_knowledge(market_data)
-
-    news = _fetch_news(ticker)
-    bsm_signals = get_bsm_signals()
-
-    # --- Step 1: Analysis ---
-    analysis_prompt = f"""<market_data>
-{_format_market_data(market_data)}
-</market_data>
-
-<recent_news>
-{news}
-</recent_news>
-
-<regime>
-Trend: {(regime or {}).get('trend', 'unknown')} | Volatility: {(regime or {}).get('volatility', 'unknown')} | VIX: {(regime or {}).get('vix', 0):.1f}
-</regime>
-
-Analyze the current market state for {ticker}. Be objective — no action recommendation."""
-
-    try:
-        logger.info("Multi-step: running Analysis phase...")
-        raw1, _ = call_ai_with_fallback(
-            system=ANALYSIS_SYSTEM,
-            user=analysis_prompt,
-            max_tokens=800,
-            config=config,
-        )
-        if raw1.startswith("```"):
-            raw1 = raw1.split("\n", 1)[1] if "\n" in raw1 else raw1[3:]
-            if raw1.endswith("```"):
-                raw1 = raw1[:-3]
-            raw1 = raw1.strip()
-        analysis = json.loads(raw1)
-        logger.info(f"Analysis: trend={analysis.get('trend')}, momentum={analysis.get('momentum')}, vol={analysis.get('volatility')}")
-    except Exception as e:
-        logger.warning(f"Multi-step Analysis failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
-
-    # --- Step 2: Strategy ---
-    ms_hold_streak_section = build_hold_streak_warning(hold_streak)
-
-    strategy_prompt = f"""<analysis>
-{json.dumps(analysis, indent=2)}
-</analysis>
-
-<strategy_signals>
-{_format_signals(signals, aggregate)}
-</strategy_signals>
-
-<relevant_knowledge>
-{_format_knowledge(knowledge)}
-</relevant_knowledge>
-
-<portfolio_summary>
-{_format_portfolio(portfolio)}
-</portfolio_summary>
-{ms_hold_streak_section}
-Based on the analysis and signals, what action should we take? Justify thoroughly."""
-
-    try:
-        logger.info("Multi-step: running Strategy phase...")
-        raw2, _ = call_ai_with_fallback(
-            system=STRATEGY_SYSTEM,
-            user=strategy_prompt,
-            max_tokens=800,
-            config=config,
-        )
-        if raw2.startswith("```"):
-            raw2 = raw2.split("\n", 1)[1] if "\n" in raw2 else raw2[3:]
-            if raw2.endswith("```"):
-                raw2 = raw2[:-3]
-            raw2 = raw2.strip()
-        strategy_rec = json.loads(raw2)
-        logger.info(f"Strategy: {strategy_rec.get('recommended_action')} conviction={strategy_rec.get('conviction', 0):.2f}")
-    except Exception as e:
-        logger.warning(f"Multi-step Strategy failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
-
-    # --- Step 3: Execution ---
-    max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
-    bsm_section = ""
-    if bsm_signals:
-        bsm_section = f"\n<bsm_signals>\n{_format_bsm_signals(bsm_signals)}\n</bsm_signals>\n"
-
-    execution_prompt = f"""<analysis>
-{json.dumps(analysis, indent=2)}
-</analysis>
-
-<strategy_recommendation>
-{json.dumps(strategy_rec, indent=2)}
-</strategy_recommendation>
-
-<portfolio>
-{_format_portfolio(portfolio)}
-</portfolio>
-
-<market_data>
-Current price: ${market_data.get('current', {}).get('price', 'N/A')}
-ATR: {market_data.get('daily_indicators', {}).get('atr', 'N/A')}
-</market_data>
-{bsm_section}
-Max trade size: {format_currency(max_trade)}. Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
-
-Produce the final trade decision JSON. Include hold_analysis if action is HOLD.
-If BUY or SELL, specify exact shares (fractional OK). Be conservative on sizing."""
-
-    # Build execution system prompt with agent addon
-    exec_system = EXECUTION_SYSTEM + "\n\n" + SYSTEM_PROMPT.split("Respond ONLY")[0].strip()
-    if agent_config and agent_config.get("system_prompt_addon"):
-        agent_name = agent_config.get("display_name", agent_config.get("name", ""))
-        exec_system += f"\n\nAGENT IDENTITY: {agent_name}\n{agent_config['system_prompt_addon']}"
-
-    try:
-        logger.info("Multi-step: running Execution phase...")
-        raw3, _ = call_ai_with_fallback(
-            system=exec_system,
-            user=execution_prompt,
-            max_tokens=1500,
-            config=config,
-        )
-        if raw3.startswith("```"):
-            raw3 = raw3.split("\n", 1)[1] if "\n" in raw3 else raw3[3:]
-            if raw3.endswith("```"):
-                raw3 = raw3[:-3]
-            raw3 = raw3.strip()
-        decision = json.loads(raw3)
-    except Exception as e:
-        logger.warning(f"Multi-step Execution failed: {e}. Falling back to single-step.")
-        return make_decision(market_data, signals, aggregate, portfolio, knowledge, macro_gate, regime, agent_config, hold_streak)
-
-    # Attach multi-step trace metadata
-    decision["_multi_step"] = {
-        "analysis": analysis,
-        "strategy_recommendation": strategy_rec,
-    }
-
-    logger.info(
-        f"Multi-step Decision: {decision.get('action')} "
-        f"{decision.get('shares', 0):.4f} shares, "
-        f"confidence={decision.get('confidence', 0):.2f}"
-    )
-
-    # Record predictions
-    predictions = decision.get("predictions", {})
-    if predictions and any(predictions.values()):
-        pred_record = {
-            "timestamp": iso_now(),
-            "price_at_prediction": market_data.get("current", {}).get("price", 0),
-            "predictions": predictions,
-            "reasoning": decision.get("hypothesis", ""),
-            "outcomes": {k: None for k in predictions},
-            "linked_trade": None,
-            "model_version": config["anthropic_model"],
-        }
-        saved = add_prediction(pred_record)
-        decision["_prediction_id"] = saved["id"]
-
-    # Validate HOLD decisions
-    if decision.get("action") == "HOLD":
-        hold_analysis = decision.get("hold_analysis")
-        if not hold_analysis or not isinstance(hold_analysis, dict):
-            # Pull from strategy phase
-            hold_just = strategy_rec.get("hold_justification", {})
-            decision["hold_analysis"] = {
-                "opportunity_cost": (hold_just or {}).get("opportunity_cost", decision.get("reasoning", "Not specified")),
-                "downside_protection": (hold_just or {}).get("downside_protection", decision.get("risk_note", "Not specified")),
-                "signal_balance": f"Balance: {aggregate.confidence:.2f} toward {aggregate.action}",
-                "decision_boundary": (hold_just or {}).get("decision_boundary", "Not specified"),
-            }
-
-    decision["_sentiment_score"] = decision.get("sentiment_score")
-    decision["_model_version"] = config["anthropic_model"]
-
-    # BSM conviction cap
-    if bsm_signals and decision.get("action") == "BUY":
-        bearish_bsm = [s for s in bsm_signals if s.get("direction") == "bearish"]
-        if bearish_bsm:
-            current_price = market_data.get("current", {}).get("price", 0)
-            bsm_cap_pct = config.get("risk_params", {}).get("bsm_conviction_cap_pct", 0.10)
-            bsm_max_value = portfolio.get("total_value", 1000) * bsm_cap_pct
-            bsm_max_shares = bsm_max_value / current_price if current_price > 0 else 0
-            if decision.get("shares", 0) > bsm_max_shares:
-                decision["shares"] = round(bsm_max_shares, 4)
-                decision["risk_note"] = (
-                    decision.get("risk_note", "") +
-                    f" [BSM conviction cap applied: {bsm_cap_pct*100:.0f}%]"
-                )
-
-    return decision
-
-
-# ─── v2: Thesis-Driven Two-Phase Engine ──────────────────────────────────────
-
-ANALYST_SYSTEM = """You are the ANALYST module of MonopolyTrader v2. Your job is to understand WHY TSLA is moving and maintain a running thesis about the stock.
-
-You focus on CAUSATION, not prediction. Your output is a thesis — a narrative about what is driving TSLA's price and what would change it.
-
-You receive:
-- Current thesis (your previous assessment)
-- News feed (classified, scored)
-- Research findings (earnings, catalysts, correlations, seasonal patterns, sector context)
-- Price action and technical data
-- Macro regime
-
-Your job:
-1. What NEWS or CATALYST is driving TSLA right now?
-2. Has the current thesis been confirmed, challenged, or invalidated?
-3. If the thesis is WRONG about price direction, say so explicitly. Don't absorb contradictory evidence into the existing narrative. If an analyst upgrade drives the stock up 5% while your thesis is bearish, the thesis was wrong about the short-term — acknowledge it.
-4. What are the key price levels (support/resistance) and what would break them?
-5. What is the bull case and bear case?
-6. What would invalidate your thesis?
-
-CRITICAL: When a high-impact catalyst contradicts your thesis direction (e.g., major upgrade while bearish, or downgrade while bullish), you MUST reduce conviction significantly. Do NOT maintain high conviction by explaining away the catalyst. The market is telling you something — listen to it.
-
-You do NOT recommend trades. You build the thesis that the Trader module uses.
-
-Respond with JSON:
-{
-  "narrative": "<2-3 sentence summary of what's driving TSLA right now>",
-  "direction": "bearish" | "bullish" | "neutral",
-  "conviction": <float 0.0-1.0>,
-  "key_levels": {"support": [<prices>], "resistance": [<prices>]},
-  "bull_case": "<what would make TSLA go up>",
-  "bear_case": "<what would make TSLA go down>",
-  "invalidation": "<what specific event or price level would prove this thesis wrong>",
-  "key_catalysts": ["<list of catalysts currently affecting TSLA>"],
-  "thesis_change_reason": "<why you changed (or didn't change) the thesis>",
-  "news_citations": ["<specific news items that informed this update>"]
-}"""
-
-
-TRADER_SYSTEM = """You are the TRADER module of MonopolyTrader v3 (swing trader). You receive a thesis about WHY TSLA is moving and use technical indicators to decide WHEN and HOW MUCH to act.
-
-The thesis determines POSITION SIZE. Technicals determine DIRECTION and TIMING.
-
-Rules:
-- Thesis-aligned trades get FULL position size (thesis + technicals agree).
-- Counter-thesis trades are ALLOWED at REDUCED size when technicals are strong. TSLA is volatile — a bearish thesis doesn't mean the stock can't bounce 5% intraday.
-- If thesis is neutral, trade on strong technical signals alone.
-- The thesis conviction weights your confidence. High conviction = larger thesis-aligned positions. Low conviction = thesis has less influence.
-- In RANGE-BOUND regime (low ADX), prioritize mean reversion and range_trader signals over thesis direction.
-- In TRENDING regime (high ADX), prioritize momentum and thesis-aligned signals.
-
-RISK RULES (v3):
-- Max position: 65% of portfolio value
-- Max single trade: 20% of portfolio value
-- Min cash reserve: 15% of portfolio value
-- Position sizing: inverse ATR (wider stop = smaller position, max 2% risk per trade)
-- Cooldown: 15 min between trades
-- If daily loss exceeds 8%, stop trading
-- Macro gate: if SPY down >2% or VIX >30, require confidence >0.80 for BUY
-
-SIGNAL INTERPRETATION: Strategies that return HOLD are ABSTAINING — not disagreeing. A single strategy at >0.70 confidence with no opposing signals is a clear trade.
-
-HOLD IS VALID: Holding cash in a declining or choppy market is a legitimate strategy. Do not trade out of guilt or pressure. A <hold_context> section may appear showing your hold vs trade accuracy. Use it to calibrate.
-
-Respond ONLY with valid JSON:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "shares": <float, 0 if HOLD>,
-  "confidence": <float 0-1>,
-  "strategy": "<primary strategy driving this decision>",
-  "hypothesis": "<I predict TSLA will [direction] by [amount] over [timeframe] because [thesis + technical reasoning]>",
-  "reasoning": "<how thesis + technicals combine to justify this decision>",
-  "knowledge_applied": ["<lesson_id>"],
-  "risk_note": "<any risk concerns>",
-  "predictions": {
-    "1day": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>},
-    "1week": {"direction": "up"|"down"|"flat", "target": <price>, "confidence": <0-1>}
-  },
-  "thesis_alignment": "<how this trade aligns with or contradicts the current thesis>",
-  "hold_analysis": <REQUIRED if action is HOLD, null otherwise> {
-    "opportunity_cost": "<what gain are you forgoing?>",
-    "downside_protection": "<what risk are you avoiding?>",
-    "signal_balance": "<buy vs sell signal balance>",
-    "decision_boundary": "<what would flip this to BUY or SELL?>"
-  }
-}"""
-
-
-def _strip_code_fences(raw: str) -> str:
-    """Strip markdown code fences from Claude response."""
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-    return raw.strip()
-
-
-def _apply_catalyst_override(thesis: Thesis, news_feed: NewsFeed) -> Thesis:
-    """Mechanically reduce thesis conviction when high-impact news contradicts direction.
-
-    This is a guard against LLM narrativization — the analyst tends to absorb
-    contradictory evidence into the existing thesis rather than updating it.
-
-    Rules:
-    - If thesis is bearish and high-impact bullish catalyst (upgrade, beat, product launch):
-      cap conviction at 0.50 and log the override
-    - If thesis is bullish and high-impact bearish catalyst (downgrade, miss, regulatory):
-      cap conviction at 0.50 and log the override
-    - Does NOT flip direction — just reduces conviction so other strategies can act
-    """
-    if not news_feed or not news_feed.items:
-        return thesis
-
-    # Check high-impact items for directional catalyst types
-    bullish_catalysts = {"upgrade", "beat", "product", "partnership", "buy_rating"}
-    bearish_catalysts = {"downgrade", "miss", "regulatory", "recall", "sell_rating"}
-
-    has_bullish_catalyst = False
-    has_bearish_catalyst = False
-    catalyst_details = []
-
-    for item in news_feed.items:
-        if not getattr(item, "is_new", False) or item.relevance < 0.7:
-            continue
-        cat_type = getattr(item, "catalyst_type", "") or ""
-        cat_lower = cat_type.lower()
-        title_lower = (item.title or "").lower()
-
-        # Check by catalyst_type field
-        if cat_lower in ("analyst",) or any(k in title_lower for k in ["upgrade", "buy rating", "reinstates", "price target raised"]):
-            has_bullish_catalyst = True
-            catalyst_details.append(f"BULLISH: {item.title[:60]}")
-        elif any(k in title_lower for k in ["downgrade", "sell rating", "price target cut"]):
-            has_bearish_catalyst = True
-            catalyst_details.append(f"BEARISH: {item.title[:60]}")
-
-        # Also check keywords in title
-        if any(k in title_lower for k in ["beats", "record deliveries", "launches"]):
-            has_bullish_catalyst = True
-            catalyst_details.append(f"BULLISH: {item.title[:60]}")
-        elif any(k in title_lower for k in ["misses", "recall", "investigation", "probe"]):
-            has_bearish_catalyst = True
-            catalyst_details.append(f"BEARISH: {item.title[:60]}")
-
-    # Apply override
-    overridden = False
-    if thesis.direction == "bearish" and has_bullish_catalyst and not has_bearish_catalyst:
-        if thesis.conviction > 0.50:
-            logger.warning(
-                f"CATALYST OVERRIDE: bearish thesis conviction {thesis.conviction:.2f} -> 0.50 "
-                f"due to bullish catalyst: {'; '.join(catalyst_details[:2])}"
-            )
-            thesis.conviction = 0.50
-            overridden = True
-    elif thesis.direction == "bullish" and has_bearish_catalyst and not has_bullish_catalyst:
-        if thesis.conviction > 0.50:
-            logger.warning(
-                f"CATALYST OVERRIDE: bullish thesis conviction {thesis.conviction:.2f} -> 0.50 "
-                f"due to bearish catalyst: {'; '.join(catalyst_details[:2])}"
-            )
-            thesis.conviction = 0.50
-            overridden = True
-
-    if overridden:
-        thesis.narrative = (
-            thesis.narrative + f" [CATALYST OVERRIDE: conviction capped at 0.50 due to "
-            f"contradicting catalyst — {catalyst_details[0][:50]}]"
-        )
-
-    return thesis
-
-
-def run_analyst(
-    current_thesis: Thesis,
-    news_feed: NewsFeed,
-    market_data: dict,
-    regime: dict = None,
-    trigger_reason: str = "",
-    lessons_text: str = "",
-) -> Thesis:
-    """Phase 1: Update the market thesis based on news, research, and price action.
-
-    Does NOT recommend trades. Returns an updated Thesis object.
-    lessons_text: recent validated lessons from trades (Connection 7).
-    """
-    config = load_config()
-    ticker = config["ticker"]
-
-    # Get research findings
-    research_text = get_relevant_research()
-
-    # Format news
-    news_text = format_news_for_prompt(news_feed)
-
-    # Format regime
-    r = regime or market_data.get("regime", {})
-    regime_text = (
-        f"Trend: {r.get('trend', 'unknown')} | "
-        f"Volatility: {r.get('volatility', 'unknown')} | "
-        f"VIX: {r.get('vix', 0):.1f}"
-    )
-
-    # Format lessons section (Connection 7: lessons → analyst)
-    lessons_section = ""
-    if lessons_text:
-        lessons_section = f"""
-<recent_trade_lessons>
-RECENT LESSONS FROM YOUR TRADES — consider whether these contradict or support your current thesis:
-{lessons_text}
-</recent_trade_lessons>
-"""
-
-    user_prompt = f"""<current_thesis>
-{current_thesis.format_for_prompt()}
-</current_thesis>
-
-<trigger>
-Thesis update triggered by: {trigger_reason or 'scheduled check'}
-</trigger>
-
-<news_feed>
-{news_text}
-</news_feed>
-
-<research_findings>
-{research_text}
-</research_findings>
-
-<market_data>
-{_format_market_data(market_data)}
-</market_data>
-
-<macro_regime>
-{regime_text}
-</macro_regime>
-{lessons_section}
-Update the thesis for {ticker}. What is driving the stock right now? Has anything changed?
-If the thesis is still valid, say so and explain why. If it needs updating, explain what changed."""
-
-    try:
-        logger.info(f"Analyst: updating thesis (trigger: {trigger_reason})")
-        raw, model_used = call_ai_with_fallback(
-            system=ANALYST_SYSTEM,
-            user=user_prompt,
-            max_tokens=1200,
-            config=config,
-        )
-        raw = _strip_code_fences(raw)
-        result = json.loads(raw)
-
-        # Build updated thesis
-        new_thesis = Thesis(
-            narrative=result.get("narrative", current_thesis.narrative),
-            direction=result.get("direction", current_thesis.direction),
-            conviction=result.get("conviction", current_thesis.conviction),
-            key_levels=result.get("key_levels", current_thesis.key_levels),
-            bull_case=result.get("bull_case", current_thesis.bull_case),
-            bear_case=result.get("bear_case", current_thesis.bear_case),
-            invalidation=result.get("invalidation", current_thesis.invalidation),
-            key_catalysts=result.get("key_catalysts", current_thesis.key_catalysts),
-            updated_by="analyst",
-        )
-
-        # CATALYST OVERRIDE: mechanically reduce conviction when high-impact
-        # news contradicts the thesis direction. Prevents narrativization where
-        # the LLM absorbs contradictory evidence into the existing story.
-        new_thesis = _apply_catalyst_override(new_thesis, news_feed)
-
-        # Save with reason
-        change_reason = result.get("thesis_change_reason", trigger_reason)
-        save_thesis(new_thesis, reason=change_reason)
-
-        logger.info(
-            f"Analyst: thesis updated — {new_thesis.direction} "
-            f"conviction={new_thesis.conviction:.2f}, "
-            f"reason={change_reason[:80]}"
-        )
-
-        return new_thesis
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Analyst: failed to parse response: {e}")
-        return current_thesis
-    except Exception as e:
-        logger.error(f"Analyst: failed: {e}")
-        return current_thesis
-
-
-def run_trader(
-    thesis: Thesis,
-    market_data: dict,
-    signals: list[StrategySignal],
-    aggregate: StrategySignal,
-    portfolio: dict,
-    knowledge: dict = None,
-    macro_gate: dict = None,
-    regime: dict = None,
-    hold_streak: dict = None,
-    stats_summary: str = "",
-) -> dict:
-    """Phase 2: Make a trade decision based on thesis + technical timing.
-
-    The thesis determines direction. Technicals determine timing.
-    stats_summary: formatted trade statistics for meta-knowledge (Connection 6).
-    Returns a decision dict compatible with the v1 format.
-    """
-    config = load_config()
-    ticker = config["ticker"]
-
-    if knowledge is None:
-        knowledge = get_relevant_knowledge(market_data)
-
-    # BSM signals
-    bsm_signals = get_bsm_signals()
-    bsm_section = ""
-    if bsm_signals:
-        bsm_section = f"\n<bsm_signals>\n{_format_bsm_signals(bsm_signals)}\n</bsm_signals>\n"
-
-    # Macro section
-    macro_section = ""
-    if regime or macro_gate:
-        r = regime or market_data.get("regime", {})
-        mg = macro_gate or {}
-        macro_section = f"""
-<macro_regime>
-Trend: {r.get('trend', 'unknown')} | Volatility: {r.get('volatility', 'unknown')} | VIX: {r.get('vix', 0):.1f}
-SPY Daily Change: {mg.get('spy_change_pct', 0)*100:.2f}%
-Macro Gate: {'ACTIVE — ' + mg.get('reason', '') if mg.get('gate_active') else 'Normal'}
-</macro_regime>
-"""
-
-    # Hold streak warning
-    hold_streak_section = build_hold_streak_warning(hold_streak)
-
-    # Stats meta-knowledge section (Connection 6: stats → trader prompt)
-    stats_section = ""
-    if stats_summary:
-        stats_section = f"""
-<meta_knowledge>
-YOUR HISTORICAL PERFORMANCE BY SETUP TYPE — use this to avoid repeating mistakes:
-{stats_summary}
-</meta_knowledge>
-"""
-
-    max_trade = portfolio.get('total_value', 1000) * config["risk_params"]["max_single_trade_pct"]
-
-    user_prompt = f"""<thesis>
-{thesis.format_for_prompt()}
-</thesis>
-
-<market_data>
-{_format_market_data(market_data)}
-</market_data>
-{macro_section}
-<strategy_signals>
-{_format_signals(signals, aggregate)}
-</strategy_signals>
-
-<portfolio>
-{_format_portfolio(portfolio)}
-</portfolio>
-
-<relevant_knowledge>
-{_format_knowledge(knowledge)}
-</relevant_knowledge>
-{stats_section}
-{bsm_section}
-{hold_streak_section}The thesis says {thesis.direction.upper()} with conviction {thesis.conviction:.2f}.
-Use technical signals to decide IF and WHEN to act on this thesis.
-Max trade = 20% of portfolio value = {format_currency(max_trade)}.
-Current price: ${market_data.get('current', {}).get('price', 'N/A')}.
-Respond with JSON only."""
-
-    try:
-        logger.info(f"Trader: making decision (thesis={thesis.direction}, conviction={thesis.conviction:.2f})")
-        raw, model_used = call_ai_with_fallback(
-            system=TRADER_SYSTEM,
-            user=user_prompt,
-            max_tokens=1500,
-            config=config,
-        )
-        raw = _strip_code_fences(raw)
-        decision = json.loads(raw)
-
-        logger.info(
-            f"Trader Decision: {decision.get('action')} "
-            f"{decision.get('shares', 0):.4f} shares, "
-            f"confidence={decision.get('confidence', 0):.2f}, "
-            f"thesis_alignment={decision.get('thesis_alignment', 'N/A')[:60]}"
-        )
-
-        # Record predictions (v2 horizons: 1day, 1week)
-        predictions = decision.get("predictions", {})
-        if predictions and any(predictions.values()):
-            pred_record = {
-                "timestamp": iso_now(),
-                "price_at_prediction": market_data.get("current", {}).get("price", 0),
-                "predictions": predictions,
-                "reasoning": decision.get("hypothesis", ""),
-                "outcomes": {k: None for k in predictions},
-                "linked_trade": None,
-                "model_version": config["anthropic_model"],
-            }
-            saved = add_prediction(pred_record)
-            decision["_prediction_id"] = saved["id"]
-
-        # Validate HOLD analysis
-        if decision.get("action") == "HOLD":
-            hold_analysis = decision.get("hold_analysis")
-            if not hold_analysis or not isinstance(hold_analysis, dict):
-                decision["hold_analysis"] = {
-                    "opportunity_cost": decision.get("reasoning", "Not specified"),
-                    "downside_protection": decision.get("risk_note", "Not specified"),
-                    "signal_balance": f"Thesis: {thesis.direction} conviction={thesis.conviction:.2f}",
-                    "decision_boundary": decision.get("thesis_alignment", "Not specified"),
-                }
-
-        # Attach metadata
-        decision["_sentiment_score"] = decision.get("sentiment_score")
-        decision["_model_version"] = config["anthropic_model"]
-        decision["_thesis_version"] = thesis.version
-        decision["_thesis_direction"] = thesis.direction
-        decision["_thesis_conviction"] = thesis.conviction
-
-        # BSM conviction cap
-        if bsm_signals and decision.get("action") == "BUY":
-            bearish_bsm = [s for s in bsm_signals if s.get("direction") == "bearish"]
-            if bearish_bsm:
-                current_price = market_data.get("current", {}).get("price", 0)
-                bsm_cap_pct = config.get("risk_params", {}).get("bsm_conviction_cap_pct", 0.10)
-                bsm_max_value = portfolio.get("total_value", 1000) * bsm_cap_pct
-                bsm_max_shares = bsm_max_value / current_price if current_price > 0 else 0
-                if decision.get("shares", 0) > bsm_max_shares:
-                    decision["shares"] = round(bsm_max_shares, 4)
-                    decision["risk_note"] = (
-                        decision.get("risk_note", "") +
-                        f" [BSM conviction cap applied: {bsm_cap_pct*100:.0f}%]"
-                    )
-
-        return decision
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Trader: failed to parse response: {e}")
-        return _error_hold("Trader JSON parse error")
-    except Exception as e:
-        logger.error(f"Trader: failed: {e}")
-        return _error_hold(f"Trader error: {e}")
-
-
-def _error_hold(reason: str) -> dict:
-    """Return a safe HOLD decision on error."""
-    return {
-        "action": "HOLD",
-        "shares": 0,
-        "confidence": 0,
-        "strategy": "error",
-        "hypothesis": f"Error — defaulting to HOLD: {reason}",
-        "reasoning": reason,
-        "knowledge_applied": [],
-        "risk_note": f"Error: {reason}",
-        "predictions": {},
-    }

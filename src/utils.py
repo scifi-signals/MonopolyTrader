@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 # Project root is one level up from src/
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
-KNOWLEDGE_DIR = ROOT_DIR / "knowledge"
 LOGS_DIR = ROOT_DIR / "logs"
 COSTS_DIR = LOGS_DIR / "costs"
 DASHBOARD_DIR = ROOT_DIR / "dashboard"
@@ -135,47 +134,6 @@ def _log_api_usage(model: str, input_tokens: int, output_tokens: int, caller: st
 
     with open(cost_path, "w") as f:
         json.dump(daily, f, indent=2, default=str)
-
-
-def get_cost_summary(days: int = 30) -> dict:
-    """Get API cost summary over recent days."""
-    COSTS_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(COSTS_DIR.glob("*.json"), reverse=True)[:days]
-
-    total_cost = 0.0
-    total_calls = 0
-    total_input = 0
-    total_output = 0
-    daily_costs = []
-
-    for f in files:
-        try:
-            with open(f) as fh:
-                data = json.load(fh)
-            totals = data.get("totals", {})
-            day_cost = totals.get("cost_usd", 0)
-            total_cost += day_cost
-            total_calls += totals.get("calls", 0)
-            total_input += totals.get("input_tokens", 0)
-            total_output += totals.get("output_tokens", 0)
-            daily_costs.append({
-                "date": data.get("date", f.stem),
-                "cost_usd": day_cost,
-                "calls": totals.get("calls", 0),
-            })
-        except Exception:
-            continue
-
-    trading_days = len(daily_costs)
-    return {
-        "total_cost_usd": round(total_cost, 4),
-        "total_calls": total_calls,
-        "total_input_tokens": total_input,
-        "total_output_tokens": total_output,
-        "trading_days": trading_days,
-        "avg_daily_cost_usd": round(total_cost / trading_days, 4) if trading_days else 0,
-        "daily_breakdown": daily_costs,
-    }
 
 
 def call_ai_with_fallback(

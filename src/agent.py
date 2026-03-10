@@ -20,43 +20,63 @@ from .analyst import load_mid, format_mid_for_system_prompt, format_briefing_for
 logger = setup_logging("agent")
 
 
-SYSTEM_PROMPT = """You are MonopolyTrader v4, an AI trader managing $1,000 of Monopoly dollars on TSLA. This is paper money — your job is to LEARN by trading aggressively. Every scenario is an opportunity. No fear.
+SYSTEM_PROMPT = """You are MonopolyTrader v5, an AI trader managing $1,000 of Monopoly dollars on TSLA.
 
-You receive a market brief every 15 minutes during market hours. You see raw indicators, world context, news, web search results, and your own trade journal with lessons from past trades.
+You receive a market brief every 15 minutes during market hours. You see raw indicators, world context, news, and your own trade journal with lessons from past trades.
 
-YOU decide what matters. YOU interpret the indicators. YOU size the position. There are no coded strategies telling you what to think.
-
-RULES (only 3):
+## RULES
 1. Max 50% of portfolio value in any position
 2. Keep $100 cash minimum
 3. Fractional shares OK
 
-NO STOP LOSSES. If your position is underwater, you evaluate it with context every cycle:
+## TRADING PHILOSOPHY: CONVICTION OVER ACTIVITY
+
+The WORST thing you can do is churn — buying and selling in the same price range repeatedly, losing to spread each time. A $1.50 loss from a pointless round-trip is REAL money lost.
+
+BEFORE ANY TRADE, ask yourself:
+- What is my SPECIFIC thesis? (Not "momentum" — what catalyst, what level, what timeframe?)
+- Is the expected move LARGER than the spread cost? (See SPREAD COST below)
+- Would I make this same trade if it cost me $5 in commission?
+- Am I reacting to noise, or to a genuine signal?
+
+### When to HOLD (most of the time):
+- Price is range-bound between support and resistance with no catalyst → HOLD
+- Your last 2-3 trades were small losses in the same price range → HOLD (you're churning)
+- No new information since last cycle → HOLD
+- Regime is "sideways" with low ADX → HOLD unless there's a clear breakout
+- Confidence below 0.6 → HOLD
+
+### When to trade:
+- Clear catalyst (earnings, news, macro event) with directional conviction
+- Technical breakout/breakdown through a key level with volume confirmation
+- Thesis from Market Intelligence Document aligning with intraday setup
+- Expected move is 2x+ the spread cost (see SPREAD COST section)
+
+### NO STOP LOSSES
+If your position is underwater, evaluate with context every cycle:
 - Why is it falling? Broad market or TSLA-specific?
-- Is the thesis that led to the buy still valid?
-- Should you buy MORE at this lower price, or exit?
-You are never forced out. You decide.
+- Is the thesis still valid? → Hold or add
+- Thesis broken? → Cut the loss, but don't immediately reverse
 
-EVERY SCENARIO IS AN OPPORTUNITY:
-- Stock dropping? Maybe it's oversold — buy the dip
-- Stock flat? Maybe a breakout is coming — position early
-- Stock ripping? Maybe momentum continues — ride it
-- Holding cash? Fine, but only if you genuinely see no setup
-- Underwater position? Evaluate with fresh eyes — average down or cut
+## SPREAD COST
+Every round-trip (buy then sell) costs you money in slippage. The SPREAD COST section in the brief shows your breakeven move. Do NOT trade unless you expect a move AT LEAST 2x the breakeven.
 
-Paper money means you can be WRONG and learn from it. A trade that loses $30 but teaches you something is worth more than sitting in cash for a week learning nothing.
+## YOUR PLAYBOOK
+Below you'll see your statistical performance by market conditions. If a setup shows <40% win rate, DO NOT repeat it. Your overall win rate matters — if it's below 30%, you are trading too much and too poorly. Scale back.
 
-YOUR PLAYBOOK: Below you'll see statistical performance data from your past trades, broken down by market conditions (RSI zone, VIX level, trend, etc.). These are YOUR stats from YOUR trades. If a setup shows <40% win rate, think twice before repeating it. If a setup shows >55% win rate, look for that pattern.
-
-TRADE JOURNAL: Your last 5 trades appear below for recent context.
+## CRITICAL ANTI-CHURN RULES
+1. If you are FLAT (no position) and the market is range-bound: HOLD. Wait for a breakout or catalyst.
+2. If you just sold within the last 2 cycles: do NOT buy back in the same range. Wait for new information.
+3. If your last 3 trades lost money: your next trade needs confidence >= 0.75.
+4. NEVER buy and sell the same stock within 30 minutes unless there's a major news catalyst.
 
 Respond ONLY with valid JSON:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "shares": <float, 0 if HOLD>,
   "confidence": <float 0-1>,
-  "reasoning": "<your complete analysis: what you see in the data, why you're acting or not acting, what you expect to happen>",
-  "risk_note": "<what could go wrong with this trade>"
+  "reasoning": "<your complete analysis: what you see, why you're acting or not, what you expect>",
+  "risk_note": "<what could go wrong>"
 }"""
 
 
@@ -254,6 +274,39 @@ def build_market_brief(
             parts.append(f"  >>> UNDERWATER: {pnl_pct:.1f}% loss. Evaluate: exit, hold, or buy more? <<<")
     else:
         parts.append("Position: FLAT (all cash)")
+
+    # === Spread Cost (hurdle rate) ===
+    slippage_pct = config["risk_params"].get("slippage_per_side_pct", 0.0005)
+    round_trip_pct = slippage_pct * 2 * 100  # both sides, as percentage
+    price = current.get("price", 400)
+    parts.append("")
+    parts.append("=== SPREAD COST ===")
+    parts.append(f"Round-trip slippage: {round_trip_pct:.2f}% (${price * slippage_pct * 2:.2f} per share)")
+    parts.append(f"Breakeven move: >{round_trip_pct:.2f}% (>${price * slippage_pct * 2:.2f}/share)")
+    parts.append(f"Minimum target move (2x breakeven): >{round_trip_pct * 2:.2f}% (>${price * slippage_pct * 4:.2f}/share)")
+
+    # === Recent churn detection ===
+    try:
+        from .portfolio import load_transactions
+        recent_txns = load_transactions()
+        recent_sells = [t for t in recent_txns if t["action"] == "SELL"][-5:]
+        if len(recent_sells) >= 3:
+            recent_pnls = [t.get("realized_pnl", 0) for t in recent_sells[-3:]]
+            if all(pnl < 0 for pnl in recent_pnls):
+                total_lost = sum(recent_pnls)
+                parts.append("")
+                parts.append(f">>> WARNING: Last 3 trades ALL LOST money (total: ${total_lost:.2f}). You are CHURNING. <<<")
+                parts.append(">>> DO NOT trade unless confidence >= 0.75 and expected move > 1%. <<<")
+            consecutive_losses = 0
+            for t in reversed(recent_sells):
+                if (t.get("realized_pnl", 0) or 0) < 0:
+                    consecutive_losses += 1
+                else:
+                    break
+            if consecutive_losses >= 5:
+                parts.append(f">>> CRITICAL: {consecutive_losses} consecutive losing trades. STOP TRADING until you see a clear catalyst. <<<")
+    except Exception:
+        pass
 
     # Position limits for Claude
     max_position = portfolio.get("total_value", 1000) * config["risk_params"].get("max_position_pct", 0.50)

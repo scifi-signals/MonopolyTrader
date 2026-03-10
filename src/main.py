@@ -1,8 +1,8 @@
-"""MonopolyTrader v4 — main entry point.
+"""MonopolyTrader v5 — main entry point.
 
-Every 15 minutes during market hours:
+Every 15 minutes during market hours (with anti-churn cooldowns):
   1. Gather data (TSLA + world + news + web search)
-  2. Build brief (raw data + portfolio + journal)
+  2. Build brief (raw data + portfolio + journal + spread cost)
   3. Claude decides (BUY / SELL / HOLD)
   4. Execute trade if any
   5. Record in journal
@@ -13,6 +13,7 @@ import argparse
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 import schedule
 
 from .utils import (
@@ -61,7 +62,7 @@ def run_cycle():
         return
 
     try:
-        logger.info("--- v4 Decision Cycle ---")
+        logger.info("--- v5 Decision Cycle ---")
 
         # 1. Gather data
         market_data = get_market_summary(ticker)
@@ -119,9 +120,16 @@ def run_cycle():
             config.get("journal", {}).get("max_entries_in_brief", 5)
         )
 
-        # 4. Check cooldown
+        # 4. Check cooldown (standard + anti-churn)
         if not check_cooldown(ticker):
             logger.info("Cooldown active — skipping Claude call")
+            _update_dashboard(market_data, portfolio)
+            return
+
+        # Anti-churn guard: escalating cooldown after consecutive losses
+        churn_skip = _check_churn_cooldown(ticker)
+        if churn_skip:
+            logger.info(f"Anti-churn cooldown: {churn_skip}")
             _update_dashboard(market_data, portfolio)
             return
 
@@ -213,7 +221,59 @@ def run_cycle():
         _update_dashboard(market_data, portfolio)
 
     except Exception as e:
-        logger.error(f"v4 decision cycle error: {e}", exc_info=True)
+        logger.error(f"v5 decision cycle error: {e}", exc_info=True)
+
+
+def _check_churn_cooldown(ticker: str) -> str | None:
+    """Enforce escalating cooldowns after consecutive small losses.
+
+    Returns a reason string if we should skip this cycle, None if OK to trade.
+
+    Logic:
+    - 3 consecutive losses with avg P&L > -$3: 30-min cooldown from last trade
+    - 5+ consecutive losses: 60-min cooldown from last trade
+    - Any loss where the buy and sell were in the same 15-min cycle range:
+      counted as churn (same-range round-trip)
+    """
+    from .portfolio import load_transactions
+    transactions = load_transactions()
+    sells = [t for t in transactions if t["action"] == "SELL" and t["ticker"] == ticker]
+    if len(sells) < 3:
+        return None
+
+    # Count consecutive losses from most recent
+    consecutive_losses = 0
+    total_lost = 0.0
+    for t in reversed(sells):
+        pnl = t.get("realized_pnl", 0) or 0
+        if pnl < 0:
+            consecutive_losses += 1
+            total_lost += pnl
+        else:
+            break
+
+    if consecutive_losses < 3:
+        return None
+
+    # Determine cooldown based on streak
+    if consecutive_losses >= 5:
+        cooldown_minutes = 60
+    else:
+        cooldown_minutes = 30
+
+    # Check time since last sell
+    last_sell_time = datetime.fromisoformat(sells[-1]["timestamp"])
+    now = datetime.now(timezone.utc)
+    minutes_since = (now - last_sell_time).total_seconds() / 60
+
+    if minutes_since < cooldown_minutes:
+        remaining = cooldown_minutes - minutes_since
+        return (
+            f"{consecutive_losses} consecutive losses (${total_lost:.2f}), "
+            f"waiting {remaining:.0f}min more ({cooldown_minutes}min cooldown)"
+        )
+
+    return None
 
 
 def _close_journal_for_sell(sell_txn: dict):
@@ -377,7 +437,7 @@ def main():
         schedule.run_pending()
         time.sleep(10)
 
-    logger.info("MonopolyTrader v4 stopped")
+    logger.info("MonopolyTrader v5 stopped")
 
 
 if __name__ == "__main__":

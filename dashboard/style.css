@@ -357,6 +357,58 @@ header h1 {
     line-height: 1.6;
 }
 
+/* Thesis History (collapsible) */
+.intel-thesis-history {
+    margin-top: 12px;
+}
+
+.thesis-history-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: color 0.2s;
+    width: 100%;
+    text-align: left;
+}
+
+.thesis-history-toggle:hover {
+    color: var(--text);
+}
+
+.thesis-history-toggle .toggle-arrow {
+    transition: transform 0.2s;
+    font-size: 10px;
+}
+
+.thesis-history-toggle.open .toggle-arrow {
+    transform: rotate(90deg);
+}
+
+.thesis-history-content {
+    display: none;
+    margin-top: 8px;
+    padding: 12px 14px;
+    background: var(--surface2);
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text2);
+    white-space: pre-wrap;
+    font-family: 'Lora', 'Georgia', serif;
+}
+
+.thesis-history-content.open {
+    display: block;
+}
+
 /* ======================== */
 /* Agent's Mind Card        */
 /* ======================== */
@@ -450,6 +502,54 @@ header h1 {
     color: var(--text);
 }
 
+/* Strategy chip in Agent's Mind */
+.am-strategy-chip {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    text-transform: lowercase;
+}
+
+/* Hypothesis block in Agent's Mind */
+.agent-mind-hypothesis {
+    margin-bottom: 16px;
+}
+
+.am-hypothesis-text {
+    font-family: 'Lora', 'Georgia', serif;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text);
+    padding: 12px 16px;
+    background: rgba(6, 182, 212, 0.05);
+    border-left: 3px solid var(--cyan);
+    border-radius: 0 8px 8px 0;
+}
+
+.am-expected-learning {
+    margin-top: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text2);
+    background: rgba(99, 102, 241, 0.04);
+    border-radius: 6px;
+    border-left: 2px solid var(--accent);
+}
+
+.am-expected-learning-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
 .agent-mind-reasoning {
     border-left: 3px solid var(--accent);
     padding: 12px 16px;
@@ -475,6 +575,54 @@ header h1 {
     border-left: 2px solid var(--orange);
 }
 
+/* Prediction row in Agent's Mind */
+.agent-mind-prediction {
+    margin-bottom: 12px;
+}
+
+.am-prediction-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.am-prediction-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.am-prediction-dir {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 4px;
+}
+
+.am-prediction-dir.pred-up { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+.am-prediction-dir.pred-down { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+.am-prediction-dir.pred-flat { background: rgba(139, 144, 165, 0.15); color: var(--text2); }
+
+.am-prediction-detail {
+    font-size: 12px;
+    color: var(--text2);
+}
+
+.am-prediction-basis {
+    font-size: 12px;
+    color: var(--text2);
+    font-style: italic;
+    flex-basis: 100%;
+    margin-top: 4px;
+    padding-left: 2px;
+}
+
 .agent-mind-regime {
     display: flex;
     gap: 8px;
@@ -494,6 +642,172 @@ header h1 {
     .am-decision-row {
         flex-wrap: wrap;
     }
+}
+
+/* ======================== */
+/* Research Lab Card        */
+/* ======================== */
+.research-lab-card {
+    position: relative;
+    overflow: hidden;
+    border-color: transparent;
+}
+
+.research-lab-accent {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--cyan), #22c55e);
+}
+
+.research-lab-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+}
+
+@media (max-width: 900px) {
+    .research-lab-grid { grid-template-columns: 1fr; }
+}
+
+.research-panel {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.research-panel-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* Prediction panel highlight */
+.prediction-panel {
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    background: linear-gradient(135deg, var(--surface2) 0%, rgba(6, 182, 212, 0.03) 100%);
+}
+
+.research-metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 13px;
+}
+
+.research-metric-label {
+    color: var(--text2);
+}
+
+.research-metric-value {
+    font-weight: 600;
+    color: var(--text);
+    font-family: 'Inter', monospace;
+}
+
+.research-metric-value.metric-good { color: var(--green); }
+.research-metric-value.metric-warn { color: var(--orange); }
+.research-metric-value.metric-bad { color: var(--red); }
+
+/* Prediction scorecard featured number */
+.prediction-featured {
+    text-align: center;
+    margin-bottom: 12px;
+    padding: 10px 0;
+}
+
+.prediction-featured-value {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.prediction-featured-label {
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+}
+
+/* Prediction by-direction mini bars */
+.pred-dir-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+}
+
+.pred-dir-label {
+    width: 40px;
+    color: var(--text2);
+    text-transform: capitalize;
+}
+
+.pred-dir-bar-track {
+    flex: 1;
+    height: 14px;
+    background: rgba(45, 49, 72, 0.5);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.pred-dir-bar {
+    height: 100%;
+    border-radius: 3px;
+    min-width: 4px;
+    transition: width 0.4s ease;
+}
+
+.pred-dir-stat {
+    width: 70px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--text2);
+}
+
+.pred-bias-warning {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(245, 158, 11, 0.08);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--orange);
+    border-left: 2px solid var(--orange);
+}
+
+/* Shadow journal panel */
+.shadow-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 13px;
+}
+
+.shadow-stat-label {
+    color: var(--text2);
+}
+
+.shadow-stat-value {
+    font-weight: 600;
+    font-family: 'Inter', monospace;
+}
+
+.shadow-empty {
+    font-size: 12px;
+    color: var(--text2);
+    font-style: italic;
+    padding: 8px 0;
 }
 
 /* ======================== */
@@ -767,6 +1081,49 @@ header h1 {
 .badge-sell { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 .badge-hold { background: rgba(139, 144, 165, 0.15); color: var(--text2); }
 
+/* Strategy chip (used in journal entries) */
+.badge-strategy {
+    background: rgba(99, 102, 241, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+/* Outcome type chip (journal) */
+.badge-outcome {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.badge-outcome.outcome-thesis-correct {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--green);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.badge-outcome.outcome-thesis-wrong {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--red);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.badge-outcome.outcome-timing {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--orange);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.badge-outcome.outcome-neutral {
+    background: rgba(139, 144, 165, 0.12);
+    color: var(--text2);
+    border: 1px solid rgba(139, 144, 165, 0.25);
+}
+
 /* ======================== */
 /* Playbook Card            */
 /* ======================== */
@@ -785,6 +1142,30 @@ header h1 {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* Multi-tag pattern section title */
+.playbook-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 16px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* Strategy section title */
+.playbook-strategy-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--purple);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 16px 0 8px;
     padding-bottom: 4px;
     border-bottom: 1px solid var(--border);
 }
@@ -827,7 +1208,7 @@ header h1 {
 }
 
 .playbook-stats {
-    width: 160px;
+    width: 180px;
     font-size: 11px;
     color: var(--text2);
     text-align: right;
@@ -905,6 +1286,39 @@ header h1 {
     font-size: 13px;
     line-height: 1.6;
     color: var(--text2);
+    margin-bottom: 8px;
+}
+
+/* Hypothesis in journal entry */
+.je-hypothesis {
+    padding: 8px 12px;
+    background: rgba(6, 182, 212, 0.04);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 8px;
+    border-left: 2px solid var(--cyan);
+    font-family: 'Lora', 'Georgia', serif;
+    line-height: 1.6;
+}
+
+.je-hypothesis-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+.je-expected-learning {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text2);
+    background: rgba(99, 102, 241, 0.04);
+    border-radius: 4px;
+    border-left: 2px solid var(--accent);
     margin-bottom: 8px;
 }
 

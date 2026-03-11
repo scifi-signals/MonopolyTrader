@@ -1,4 +1,4 @@
-// MonopolyTrader v5 Dashboard
+// MonopolyTrader v6 Dashboard
 
 let DATA = null;
 let charts = {};
@@ -45,6 +45,11 @@ function shortDateTime(iso) {
         d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // --- Chart defaults ---
 
 const CHART_DEFAULTS = {
@@ -69,6 +74,7 @@ function render() {
     renderStatusBanner();
     renderMarketIntelligence();
     renderAgentMind();
+    renderResearchLab();
     renderDailyBriefing();
     renderKPIs();
     renderBenchmarkComparison();
@@ -104,7 +110,7 @@ function renderStatusBanner() {
         ? (Date.now() - new Date(DATA.generated_at).getTime()) / 3600000
         : 999;
 
-    let cls, dotHtml, text;
+    let cls, text;
     if (staleHours > 6) {
         cls = 'stale';
         text = 'Data may be stale — last updated ' + timeAgo(DATA.generated_at);
@@ -144,11 +150,11 @@ function renderMarketIntelligence() {
     const confColor = dir === 'bull' ? '#22c55e' : dir === 'bear' ? '#ef4444' : '#8b90a5';
 
     document.getElementById('intel-thesis').innerHTML = `
-        <span class="thesis-direction-badge ${dirClass}">${dir}</span>
+        <span class="thesis-direction-badge ${dirClass}">${escapeHtml(dir)}</span>
         <div class="thesis-conf-ring" style="background: conic-gradient(${confColor} ${conf}%, var(--surface2) 0)">
             <div class="thesis-conf-inner">${conf}%</div>
         </div>
-        <div class="thesis-reasoning">${thesis.reasoning || thesis.evidence || 'No thesis reasoning available.'}</div>
+        <div class="thesis-reasoning">${escapeHtml(thesis.reasoning || thesis.evidence || 'No thesis reasoning available.')}</div>
     `;
 
     // Key levels
@@ -172,7 +178,7 @@ function renderMarketIntelligence() {
             const isSupport = k.toLowerCase().includes('support');
             const cls = isSupport ? 'level-support' : 'level-resistance';
             const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-            levelsHtml += `<div class="level-row"><span class="level-label">${label}</span><span class="level-value ${cls}">${fmt(levels[k])}</span></div>`;
+            levelsHtml += `<div class="level-row"><span class="level-label">${escapeHtml(label)}</span><span class="level-value ${cls}">${fmt(levels[k])}</span></div>`;
         });
     }
     document.getElementById('intel-levels').innerHTML = levelsHtml;
@@ -183,7 +189,7 @@ function renderMarketIntelligence() {
     if (Array.isArray(catalysts)) {
         catalysts.forEach(c => {
             const text = typeof c === 'object' ? (c.description || c.catalyst || c.name || JSON.stringify(c)) : c;
-            catHtml += `<div class="catalyst-item"><span class="catalyst-dot"></span><span>${text}</span></div>`;
+            catHtml += `<div class="catalyst-item"><span class="catalyst-dot"></span><span>${escapeHtml(text)}</span></div>`;
         });
     }
     if (!catalysts.length) {
@@ -195,7 +201,7 @@ function renderMarketIntelligence() {
     const sector = mid.sector_context;
     if (sector) {
         const sectorText = typeof sector === 'string' ? sector : (sector.summary || sector.description || JSON.stringify(sector));
-        document.getElementById('intel-sector').innerHTML = `<strong style="color:var(--text)">Sector:</strong> ${sectorText}`;
+        document.getElementById('intel-sector').innerHTML = `<strong style="color:var(--text)">Sector:</strong> ${escapeHtml(sectorText)}`;
         document.getElementById('intel-sector').style.display = 'block';
     } else {
         document.getElementById('intel-sector').style.display = 'none';
@@ -208,14 +214,35 @@ function renderMarketIntelligence() {
         let lessonsHtml = '';
         if (working) {
             const wText = typeof working === 'string' ? working : (Array.isArray(working) ? working.join('. ') : JSON.stringify(working));
-            lessonsHtml += `<div class="intel-lessons-panel working"><div class="intel-lessons-title">What's Working</div><div class="intel-lessons-text">${wText}</div></div>`;
+            lessonsHtml += `<div class="intel-lessons-panel working"><div class="intel-lessons-title">What's Working</div><div class="intel-lessons-text">${escapeHtml(wText)}</div></div>`;
         }
         if (notWorking) {
             const nwText = typeof notWorking === 'string' ? notWorking : (Array.isArray(notWorking) ? notWorking.join('. ') : JSON.stringify(notWorking));
-            lessonsHtml += `<div class="intel-lessons-panel not-working"><div class="intel-lessons-title">What's Not Working</div><div class="intel-lessons-text">${nwText}</div></div>`;
+            lessonsHtml += `<div class="intel-lessons-panel not-working"><div class="intel-lessons-title">What's Not Working</div><div class="intel-lessons-text">${escapeHtml(nwText)}</div></div>`;
         }
         document.getElementById('intel-lessons').innerHTML = lessonsHtml;
     }
+
+    // Thesis History (v6)
+    const thesisHistory = DATA.thesis_history;
+    const historyEl = document.getElementById('intel-thesis-history');
+    if (thesisHistory && typeof thesisHistory === 'string' && thesisHistory.trim()) {
+        historyEl.innerHTML = `
+            <button class="thesis-history-toggle" onclick="toggleThesisHistory(this)">
+                <span class="toggle-arrow">&#9654;</span> Thesis History
+            </button>
+            <div class="thesis-history-content">${escapeHtml(thesisHistory)}</div>
+        `;
+        historyEl.style.display = 'block';
+    } else {
+        historyEl.style.display = 'none';
+    }
+}
+
+function toggleThesisHistory(btn) {
+    btn.classList.toggle('open');
+    const content = btn.nextElementSibling;
+    content.classList.toggle('open');
 }
 
 // --- Agent's Mind ---
@@ -246,25 +273,100 @@ function renderAgentMind() {
         metaHtml += `<span class="am-price">@ ${fmt(lc.price)}</span>`;
     }
 
+    // Strategy chip
+    let strategyChip = '';
+    if (lc.strategy) {
+        strategyChip = `<span class="am-strategy-chip">${escapeHtml(lc.strategy)}</span>`;
+    }
+
     document.getElementById('agent-mind-decision').innerHTML = `
         <div class="am-decision-row">
             <div class="am-action-badge ${actionClass}">${action}</div>
             <div class="am-conf-ring" style="background: conic-gradient(${confColor} ${conf}%, var(--surface2) 0)">
                 <div class="am-conf-inner">${conf}%</div>
             </div>
-            <div class="am-decision-meta">${metaHtml}</div>
+            <div class="am-decision-meta">
+                ${metaHtml}
+                ${strategyChip}
+            </div>
         </div>
     `;
+
+    // Hypothesis + expected_learning (v6)
+    let hypothesisHtml = '';
+    if (lc.hypothesis) {
+        hypothesisHtml += `<div class="am-hypothesis-text">${escapeHtml(lc.hypothesis)}</div>`;
+    }
+    if (lc.expected_learning) {
+        hypothesisHtml += `
+            <div class="am-expected-learning">
+                <div class="am-expected-learning-label">Expected Learning</div>
+                ${escapeHtml(lc.expected_learning)}
+            </div>
+        `;
+    }
+    document.getElementById('agent-mind-hypothesis').innerHTML = hypothesisHtml;
 
     // Reasoning + risk note
     let reasonHtml = '';
     if (lc.reasoning) {
-        reasonHtml += `<div class="am-reasoning-text">${lc.reasoning}</div>`;
+        reasonHtml += `<div class="am-reasoning-text">${escapeHtml(lc.reasoning)}</div>`;
     }
     if (lc.risk_note) {
-        reasonHtml += `<div class="am-risk-note">${lc.risk_note}</div>`;
+        reasonHtml += `<div class="am-risk-note">${escapeHtml(lc.risk_note)}</div>`;
     }
     document.getElementById('agent-mind-reasoning').innerHTML = reasonHtml;
+
+    // Prediction (v6 format: {direction, magnitude, cycles, basis})
+    let predHtml = '';
+    const pred = lc.prediction;
+    if (pred && typeof pred === 'object' && pred.direction) {
+        const dir = pred.direction;
+        const dirCls = dir === 'up' ? 'pred-up' : dir === 'down' ? 'pred-down' : 'pred-flat';
+        const arrow = dir === 'up' ? '\u25B2' : dir === 'down' ? '\u25BC' : '\u25CF';
+        const mag = pred.magnitude || '';
+        const cycles = pred.cycles || '';
+
+        predHtml = `
+            <div class="am-prediction-row">
+                <span class="am-prediction-label">Prediction</span>
+                <span class="am-prediction-dir ${dirCls}">${arrow} ${escapeHtml(dir)}</span>
+                ${mag ? `<span class="am-prediction-detail">${escapeHtml(mag)} move</span>` : ''}
+                ${cycles ? `<span class="am-prediction-detail">in ${cycles} cycle${cycles !== 1 ? 's' : ''}</span>` : ''}
+                ${pred.basis ? `<span class="am-prediction-basis">${escapeHtml(pred.basis)}</span>` : ''}
+            </div>
+        `;
+    }
+    // Also handle the older predictions format: {30min: {direction, target, confidence}, ...}
+    else if (lc.predictions && typeof lc.predictions === 'object' && !Array.isArray(lc.predictions)) {
+        const preds = lc.predictions;
+        const timeframes = Object.keys(preds);
+        if (timeframes.length) {
+            let rows = '';
+            timeframes.forEach(tf => {
+                const p = preds[tf];
+                if (!p || !p.direction) return;
+                const dir = p.direction;
+                const dirCls = dir === 'up' ? 'pred-up' : dir === 'down' ? 'pred-down' : 'pred-flat';
+                const arrow = dir === 'up' ? '\u25B2' : dir === 'down' ? '\u25BC' : '\u25CF';
+                const target = p.target ? fmt(p.target) : '';
+                const confStr = p.confidence ? Math.round(p.confidence * 100) + '%' : '';
+                rows += `
+                    <span class="am-prediction-dir ${dirCls}">${arrow} ${escapeHtml(dir)}</span>
+                    <span class="am-prediction-detail">${escapeHtml(tf)}${target ? ' \u2192 ' + target : ''}${confStr ? ' (' + confStr + ')' : ''}</span>
+                `;
+            });
+            if (rows) {
+                predHtml = `
+                    <div class="am-prediction-row">
+                        <span class="am-prediction-label">Predictions</span>
+                        ${rows}
+                    </div>
+                `;
+            }
+        }
+    }
+    document.getElementById('agent-mind-prediction').innerHTML = predHtml;
 
     // Regime chips
     const regime = lc.regime || {};
@@ -272,23 +374,243 @@ function renderAgentMind() {
     if (typeof regime === 'object') {
         if (regime.trend) {
             const tColor = regime.trend === 'bullish' ? 'var(--green)' : regime.trend === 'bearish' ? 'var(--red)' : 'var(--text2)';
-            chipsHtml += `<span class="am-regime-chip" style="color:${tColor};border-color:${tColor}">${regime.trend}</span>`;
+            chipsHtml += `<span class="am-regime-chip" style="color:${tColor};border-color:${tColor}">${escapeHtml(regime.trend)}</span>`;
         }
         if (regime.volatility) {
             const vColor = regime.volatility === 'high' ? 'var(--orange)' : regime.volatility === 'low' ? 'var(--cyan)' : 'var(--text2)';
-            chipsHtml += `<span class="am-regime-chip" style="color:${vColor};border-color:${vColor}">${regime.volatility} vol</span>`;
+            chipsHtml += `<span class="am-regime-chip" style="color:${vColor};border-color:${vColor}">${escapeHtml(regime.volatility)} vol</span>`;
         }
         if (regime.vix !== undefined) {
             chipsHtml += `<span class="am-regime-chip" style="color:var(--purple);border-color:var(--purple)">VIX ${Number(regime.vix).toFixed(1)}</span>`;
         }
     } else if (typeof regime === 'string') {
-        chipsHtml += `<span class="am-regime-chip" style="color:var(--text2);border-color:var(--text2)">${regime}</span>`;
+        chipsHtml += `<span class="am-regime-chip" style="color:var(--text2);border-color:var(--text2)">${escapeHtml(regime)}</span>`;
     }
     // Also show VIX from top-level if present and not in regime
     if (lc.vix !== undefined && !(regime && regime.vix !== undefined)) {
         chipsHtml += `<span class="am-regime-chip" style="color:var(--purple);border-color:var(--purple)">VIX ${Number(lc.vix).toFixed(1)}</span>`;
     }
     document.getElementById('agent-mind-regime').innerHTML = chipsHtml;
+}
+
+// --- Research Lab (v6) ---
+
+function renderResearchLab() {
+    const rm = DATA.research_metrics;
+    const ps = DATA.prediction_summary;
+    const ss = DATA.shadow_summary;
+
+    // Show if any v6 data exists
+    const hasResearch = rm && typeof rm === 'object' && Object.keys(rm).length > 0;
+    const hasPrediction = ps && typeof ps === 'object' && Object.keys(ps).length > 0;
+    const hasShadow = ss && typeof ss === 'object' && Object.keys(ss).length > 0;
+
+    if (!hasResearch && !hasPrediction && !hasShadow) return;
+
+    const section = document.getElementById('research-lab-section');
+    section.style.display = 'block';
+
+    // Research Metrics panel
+    renderResearchMetrics(rm || {});
+
+    // Prediction Scorecard panel
+    renderPredictionScorecard(ps || {});
+
+    // Shadow Journal panel
+    renderShadowJournal(ss || {});
+}
+
+function renderResearchMetrics(rm) {
+    const el = document.getElementById('research-metrics-panel');
+    let html = '<div class="research-panel-title">Research Metrics</div>';
+
+    if (!rm || Object.keys(rm).length === 0) {
+        html += '<div class="shadow-empty">Research metrics accumulating...</div>';
+        el.innerHTML = html;
+        return;
+    }
+
+    // Experiment efficiency
+    if (rm.experiment_efficiency !== undefined) {
+        const eff = Math.round(rm.experiment_efficiency * 100);
+        const cls = eff >= 30 ? 'metric-good' : eff >= 15 ? '' : 'metric-warn';
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Experiment Efficiency</span>
+            <span class="research-metric-value ${cls}">${eff}%</span>
+        </div>`;
+    }
+
+    // Redundant loss rate
+    if (rm.redundant_loss_rate !== undefined) {
+        const rlr = Math.round(rm.redundant_loss_rate * 100);
+        const cls = rlr === 0 ? 'metric-good' : rlr <= 5 ? 'metric-warn' : 'metric-bad';
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Redundant Loss Rate</span>
+            <span class="research-metric-value ${cls}">${rlr}%</span>
+        </div>`;
+    }
+
+    // Pattern discovery count
+    if (rm.pattern_discovery_count !== undefined) {
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Patterns Discovered</span>
+            <span class="research-metric-value">${rm.pattern_discovery_count}</span>
+        </div>`;
+    }
+
+    // Calibration error
+    if (rm.calibration_error !== undefined) {
+        const ce = rm.calibration_error;
+        const cls = ce <= 0.1 ? 'metric-good' : ce <= 0.25 ? '' : 'metric-warn';
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Calibration Error</span>
+            <span class="research-metric-value ${cls}">${ce.toFixed(2)}</span>
+        </div>`;
+    }
+
+    // Rolling win rate
+    if (rm.rolling_win_rate_10 !== undefined && rm.rolling_win_rate_10 !== null) {
+        const rwr = Math.round(rm.rolling_win_rate_10 * 100);
+        const cls = rwr >= 50 ? 'metric-good' : rwr >= 35 ? '' : 'metric-bad';
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Win Rate (last 10)</span>
+            <span class="research-metric-value ${cls}">${rwr}%</span>
+        </div>`;
+    }
+
+    el.innerHTML = html;
+}
+
+function renderPredictionScorecard(ps) {
+    const el = document.getElementById('prediction-scorecard-panel');
+    let html = '<div class="research-panel-title">Prediction Scorecard</div>';
+
+    if (!ps || ps.resolved === undefined || ps.resolved === 0) {
+        const total = ps && ps.total_predictions ? ps.total_predictions : 0;
+        html += `<div class="shadow-empty">Predictions accumulating${total > 0 ? ' (' + total + ' pending)' : ''}...</div>`;
+        el.innerHTML = html;
+        return;
+    }
+
+    // Featured: direction accuracy (large)
+    const dirAcc = Math.round((ps.direction_accuracy || 0) * 100);
+    const dirColor = dirAcc >= 60 ? 'var(--green)' : dirAcc >= 45 ? 'var(--orange)' : 'var(--red)';
+    html += `
+        <div class="prediction-featured">
+            <div class="prediction-featured-value" style="color:${dirColor}">${dirAcc}%</div>
+            <div class="prediction-featured-label">Direction Accuracy (${ps.resolved} resolved)</div>
+        </div>
+    `;
+
+    // Magnitude accuracy and avg score
+    if (ps.magnitude_accuracy !== undefined) {
+        const magAcc = Math.round(ps.magnitude_accuracy * 100);
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Magnitude Accuracy</span>
+            <span class="research-metric-value">${magAcc}%</span>
+        </div>`;
+    }
+
+    if (ps.avg_score !== undefined) {
+        html += `<div class="research-metric-row">
+            <span class="research-metric-label">Avg Score</span>
+            <span class="research-metric-value">${ps.avg_score.toFixed(2)} / 1.0</span>
+        </div>`;
+    }
+
+    // By-direction breakdown with mini bars
+    const byDir = ps.by_direction || {};
+    const dirKeys = ['up', 'down', 'flat'];
+    const hasAnyDir = dirKeys.some(d => byDir[d]);
+    if (hasAnyDir) {
+        html += '<div style="margin-top:10px">';
+        dirKeys.forEach(d => {
+            if (!byDir[d]) return;
+            const info = byDir[d];
+            const acc = Math.round(info.accuracy * 100);
+            const barColor = acc >= 60 ? 'var(--green)' : acc >= 45 ? 'var(--orange)' : 'var(--red)';
+            html += `
+                <div class="pred-dir-row">
+                    <span class="pred-dir-label">${d}</span>
+                    <div class="pred-dir-bar-track">
+                        <div class="pred-dir-bar" style="width:${Math.max(acc, 5)}%;background:${barColor}"></div>
+                    </div>
+                    <span class="pred-dir-stat">${acc}% (${info.count})</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    // Bias warning
+    if (ps.overpredict_magnitude) {
+        html += '<div class="pred-bias-warning">Bias: over-predicts magnitude — actual moves are smaller than expected</div>';
+    }
+
+    el.innerHTML = html;
+}
+
+function renderShadowJournal(ss) {
+    const el = document.getElementById('shadow-journal-panel');
+    let html = '<div class="research-panel-title">Shadow Journal</div>';
+
+    if (!ss || ss.total_holds === undefined || ss.total_holds === 0) {
+        html += '<div class="shadow-empty">Shadow tracking active — data accumulating</div>';
+        el.innerHTML = html;
+        return;
+    }
+
+    const total = ss.total_holds;
+    const period = ss.period_hours || 24;
+
+    html += `<div class="research-metric-row">
+        <span class="research-metric-label">Total HOLDs (${period}h)</span>
+        <span class="research-metric-value">${total}</span>
+    </div>`;
+
+    // Profitable holds (missed gains)
+    if (ss.profitable_buys !== undefined) {
+        html += `<div class="shadow-stat-row">
+            <span class="shadow-stat-label">Missed gains</span>
+            <span class="shadow-stat-value" style="color:var(--orange)">${ss.profitable_buys}</span>
+        </div>`;
+    }
+
+    // Unprofitable holds (correctly avoided)
+    if (ss.unprofitable_buys !== undefined) {
+        html += `<div class="shadow-stat-row">
+            <span class="shadow-stat-label">Correctly avoided</span>
+            <span class="shadow-stat-value" style="color:var(--green)">${ss.unprofitable_buys}</span>
+        </div>`;
+    }
+
+    // Biggest missed gain
+    if (ss.biggest_missed_gain && ss.biggest_missed_gain > 0) {
+        html += `<div class="shadow-stat-row">
+            <span class="shadow-stat-label">Biggest missed</span>
+            <span class="shadow-stat-value" style="color:var(--orange)">${fmt(ss.biggest_missed_gain)}</span>
+        </div>`;
+    }
+
+    // Biggest avoided loss
+    if (ss.biggest_avoided_loss && ss.biggest_avoided_loss > 0) {
+        html += `<div class="shadow-stat-row">
+            <span class="shadow-stat-label">Biggest saved</span>
+            <span class="shadow-stat-value" style="color:var(--green)">${fmt(ss.biggest_avoided_loss)}</span>
+        </div>`;
+    }
+
+    // Hold quality
+    if (ss.hold_quality !== undefined && ss.hold_quality > 0) {
+        const hq = Math.round(ss.hold_quality * 100);
+        const cls = hq >= 50 ? 'metric-good' : hq >= 30 ? '' : 'metric-warn';
+        html += `<div class="research-metric-row" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+            <span class="research-metric-label">Hold Quality</span>
+            <span class="research-metric-value ${cls}">${hq}%</span>
+        </div>`;
+    }
+
+    el.innerHTML = html;
 }
 
 // --- Daily Briefing ---
@@ -308,7 +630,7 @@ function renderDailyBriefing() {
     if (br.thesis_status) {
         document.getElementById('briefing-thesis-status').innerHTML = `
             <div class="briefing-label">Thesis Status</div>
-            <div class="briefing-text">${br.thesis_status}</div>
+            <div class="briefing-text">${escapeHtml(br.thesis_status)}</div>
         `;
     }
 
@@ -322,7 +644,7 @@ function renderDailyBriefing() {
 
         document.getElementById('briefing-posture').innerHTML = `
             <div class="briefing-label">Recommended Posture</div>
-            <span class="posture-badge ${postureClass}">${br.recommended_posture}</span>
+            <span class="posture-badge ${postureClass}">${escapeHtml(br.recommended_posture)}</span>
         `;
     }
 
@@ -335,10 +657,10 @@ function renderDailyBriefing() {
                 const type = typeof s === 'object' ? (s.type || '').toLowerCase() : '';
                 const bulletClass = type.includes('bull') ? 'scenario-bull' : type.includes('bear') ? 'scenario-bear' : 'scenario-base';
                 const bullet = type.includes('bull') ? '\u25B2' : type.includes('bear') ? '\u25BC' : '\u25CF';
-                scenHtml += `<div class="scenario-item"><span class="scenario-bullet ${bulletClass}">${bullet}</span><span>${text}</span></div>`;
+                scenHtml += `<div class="scenario-item"><span class="scenario-bullet ${bulletClass}">${bullet}</span><span>${escapeHtml(text)}</span></div>`;
             });
         } else if (typeof br.scenarios === 'string') {
-            scenHtml += `<div class="briefing-text">${br.scenarios}</div>`;
+            scenHtml += `<div class="briefing-text">${escapeHtml(br.scenarios)}</div>`;
         }
         document.getElementById('briefing-scenarios').innerHTML = scenHtml;
     }
@@ -349,10 +671,10 @@ function renderDailyBriefing() {
         if (Array.isArray(br.key_data_points)) {
             br.key_data_points.forEach(dp => {
                 const text = typeof dp === 'string' ? dp : (dp.point || dp.description || JSON.stringify(dp));
-                dpHtml += `<div class="data-point-item">${text}</div>`;
+                dpHtml += `<div class="data-point-item">${escapeHtml(text)}</div>`;
             });
         } else if (typeof br.key_data_points === 'string') {
-            dpHtml += `<div class="briefing-text">${br.key_data_points}</div>`;
+            dpHtml += `<div class="briefing-text">${escapeHtml(br.key_data_points)}</div>`;
         }
         document.getElementById('briefing-data-points').innerHTML = dpHtml;
     }
@@ -618,40 +940,110 @@ function renderPlaybook() {
     const theses = ledger.theses;
     let html = '';
 
-    // Sort categories, render each
-    const categories = Object.keys(theses).sort();
-    categories.forEach(cat => {
-        const tags = theses[cat];
-        if (!tags || typeof tags !== 'object') return;
+    // v6 format: theses is a flat dict keyed by "tag_name:tag_value"
+    // Group by tag name (part before ":") to create categories
+    const categories = {};
+    const entries = Object.entries(theses);
 
-        const entries = Object.entries(tags)
-            .filter(([_, v]) => v && v.trades > 0)
-            .sort((a, b) => (b[1].weighted_hit_rate || b[1].hit_rate || 0) - (a[1].weighted_hit_rate || a[1].hit_rate || 0));
+    entries.forEach(([key, stats]) => {
+        if (!stats || typeof stats !== 'object' || !stats.trades) return;
 
-        if (!entries.length) return;
+        // Parse the key: "tag_name:tag_value" or check if it's already nested
+        const colonIdx = key.indexOf(':');
+        let catName, tagValue;
 
-        html += `<div class="playbook-category">`;
-        html += `<div class="playbook-cat-title">${cat.replace(/_/g, ' ')}</div>`;
+        if (colonIdx > 0) {
+            // v6 flat format: "rsi_zone:neutral"
+            catName = key.substring(0, colonIdx);
+            tagValue = key.substring(colonIdx + 1);
+        } else {
+            // Fallback: use as-is
+            catName = 'other';
+            tagValue = key;
+        }
 
-        entries.forEach(([tagVal, stats]) => {
-            const wr = stats.weighted_hit_rate || stats.hit_rate || 0;
-            const wrPct = Math.round(wr * 100);
-            const barColor = wr >= 0.5 ? 'var(--green)' : wr >= 0.3 ? 'var(--orange)' : 'var(--red)';
-            const avgPnl = stats.avg_pnl || 0;
-
-            html += `
-                <div class="playbook-row">
-                    <span class="playbook-tag">${tagVal}</span>
-                    <div class="playbook-bar-track">
-                        <div class="playbook-bar" style="width:${Math.max(wrPct, 8)}%;background:${barColor}">${wrPct}%</div>
-                    </div>
-                    <span class="playbook-stats">${stats.trades}T ${stats.wins || 0}W ${stats.losses || 0}L | ${fmt(avgPnl)}</span>
-                </div>
-            `;
-        });
-
-        html += `</div>`;
+        if (!categories[catName]) {
+            categories[catName] = [];
+        }
+        categories[catName].push({ tagValue, stats });
     });
+
+    // If categories were built, render them
+    const catNames = Object.keys(categories).sort();
+    if (catNames.length > 0) {
+        catNames.forEach(cat => {
+            const items = categories[cat]
+                .filter(item => item.stats.trades > 0)
+                .sort((a, b) => (b.stats.win_rate || 0) - (a.stats.win_rate || 0));
+
+            if (!items.length) return;
+
+            html += `<div class="playbook-category">`;
+            html += `<div class="playbook-cat-title">${escapeHtml(cat.replace(/_/g, ' '))}</div>`;
+
+            items.forEach(({ tagValue, stats }) => {
+                html += _renderPlaybookRow(tagValue, stats);
+            });
+
+            html += `</div>`;
+        });
+    } else {
+        // Legacy nested format: theses[category][tagValue] = stats
+        const legacyCategories = Object.keys(theses).sort();
+        legacyCategories.forEach(cat => {
+            const tags = theses[cat];
+            if (!tags || typeof tags !== 'object') return;
+
+            // Check if this looks like nested (values are objects with their own entries)
+            const firstVal = Object.values(tags)[0];
+            if (!firstVal || typeof firstVal !== 'object' || !firstVal.trades) return;
+
+            const catEntries = Object.entries(tags)
+                .filter(([_, v]) => v && v.trades > 0)
+                .sort((a, b) => (b[1].win_rate || b[1].weighted_hit_rate || b[1].hit_rate || 0) - (a[1].win_rate || a[1].weighted_hit_rate || a[1].hit_rate || 0));
+
+            if (!catEntries.length) return;
+
+            html += `<div class="playbook-category">`;
+            html += `<div class="playbook-cat-title">${escapeHtml(cat.replace(/_/g, ' '))}</div>`;
+
+            catEntries.forEach(([tagVal, stats]) => {
+                html += _renderPlaybookRow(tagVal, stats);
+            });
+
+            html += `</div>`;
+        });
+    }
+
+    // Multi-tag patterns (v6)
+    const multiPatterns = ledger.multi_tag_patterns;
+    if (multiPatterns && typeof multiPatterns === 'object') {
+        const multiEntries = Object.entries(multiPatterns)
+            .filter(([_, v]) => v && v.trades >= 3)
+            .sort((a, b) => (b[1].win_rate || 0) - (a[1].win_rate || 0));
+
+        if (multiEntries.length) {
+            html += `<div class="playbook-section-title">Multi-Tag Patterns</div>`;
+            multiEntries.forEach(([pattern, stats]) => {
+                html += _renderPlaybookRow(pattern, stats);
+            });
+        }
+    }
+
+    // Strategy stats (v6)
+    const stratStats = ledger.strategy_stats;
+    if (stratStats && typeof stratStats === 'object') {
+        const stratEntries = Object.entries(stratStats)
+            .filter(([_, v]) => v && v.trades >= 2)
+            .sort((a, b) => (b[1].win_rate || 0) - (a[1].win_rate || 0));
+
+        if (stratEntries.length) {
+            html += `<div class="playbook-strategy-title">Strategy Performance</div>`;
+            stratEntries.forEach(([stratName, stats]) => {
+                html += _renderPlaybookRow(stratName.replace(/_/g, ' '), stats);
+            });
+        }
+    }
 
     if (!html) {
         html = '<div style="font-size:13px;color:var(--text2)">No playbook data yet. Stats build after trades close.</div>';
@@ -660,11 +1052,40 @@ function renderPlaybook() {
     document.getElementById('playbook-content').innerHTML = html;
 }
 
+function _renderPlaybookRow(label, stats) {
+    const wr = stats.win_rate || stats.weighted_hit_rate || stats.hit_rate || 0;
+    const wrPct = Math.round(wr * 100);
+    const barColor = wr >= 0.5 ? 'var(--green)' : wr >= 0.3 ? 'var(--orange)' : 'var(--red)';
+    const avgPnl = stats.avg_pnl || 0;
+    const wins = stats.wins || 0;
+    const losses = (stats.trades || 0) - wins;
+
+    return `
+        <div class="playbook-row">
+            <span class="playbook-tag">${escapeHtml(label)}</span>
+            <div class="playbook-bar-track">
+                <div class="playbook-bar" style="width:${Math.max(wrPct, 8)}%;background:${barColor}">${wrPct}%</div>
+            </div>
+            <span class="playbook-stats">${stats.trades}T ${wins}W ${losses}L | ${fmt(avgPnl)}</span>
+        </div>
+    `;
+}
+
 // --- Trade Journal ---
 
 function renderTradeJournal() {
-    const journal = DATA.trade_journal;
-    if (!journal || !journal.length) return;
+    // v6 uses "trade_journal" (array of objects)
+    // v5/older might use "journal" (could be a string or array)
+    let journal = DATA.trade_journal;
+    if (!journal || !Array.isArray(journal) || !journal.length) {
+        // Try older "journal" key
+        const legacyJournal = DATA.journal;
+        if (legacyJournal && Array.isArray(legacyJournal) && legacyJournal.length && typeof legacyJournal[0] === 'object') {
+            journal = legacyJournal;
+        } else {
+            return;
+        }
+    }
 
     const section = document.getElementById('journal-section');
     section.style.display = 'block';
@@ -692,16 +1113,45 @@ function renderTradeJournal() {
             pnlHtml = `<span class="je-pnl ${pnlClass(e.realized_pnl)}">${fmt(e.realized_pnl)}</span>`;
         }
 
+        // Strategy chip (v6)
+        let strategyHtml = '';
+        if (e.strategy) {
+            strategyHtml = `<span class="badge-strategy">${escapeHtml(e.strategy)}</span>`;
+        }
+
+        // Outcome type chip (v6)
+        let outcomeHtml = '';
+        if (e.outcome_type) {
+            const ot = e.outcome_type;
+            let otClass = 'outcome-neutral';
+            if (ot === 'thesis_correct' || ot === 'correct') otClass = 'outcome-thesis-correct';
+            else if (ot === 'thesis_wrong' || ot === 'wrong') otClass = 'outcome-thesis-wrong';
+            else if (ot === 'timing_wrong' || ot === 'execution_wrong') otClass = 'outcome-timing';
+            outcomeHtml = `<span class="badge-outcome ${otClass}">${escapeHtml(ot.replace(/_/g, ' '))}</span>`;
+        }
+
+        // Hypothesis (v6)
+        let hypothesisHtml = '';
+        if (e.hypothesis) {
+            hypothesisHtml = `<div class="je-hypothesis"><div class="je-hypothesis-label">Hypothesis</div>${escapeHtml(e.hypothesis)}</div>`;
+        }
+
+        // Expected learning (v6)
+        let expectedLearningHtml = '';
+        if (e.expected_learning) {
+            expectedLearningHtml = `<div class="je-expected-learning">${escapeHtml(e.expected_learning)}</div>`;
+        }
+
         let lessonHtml = '';
         if (e.lesson) {
-            lessonHtml = `<div class="je-lesson"><div class="je-lesson-label">Lesson</div>${e.lesson}</div>`;
+            lessonHtml = `<div class="je-lesson"><div class="je-lesson-label">Lesson</div>${escapeHtml(e.lesson)}</div>`;
         }
 
         let tagsHtml = '';
-        if (e.tags && Object.keys(e.tags).length) {
+        if (e.tags && typeof e.tags === 'object' && Object.keys(e.tags).length) {
             tagsHtml = '<div class="je-tags">';
             Object.entries(e.tags).forEach(([k, v]) => {
-                tagsHtml += `<span class="je-tag">${k}: ${v}</span>`;
+                tagsHtml += `<span class="je-tag">${escapeHtml(k)}: ${escapeHtml(v)}</span>`;
             });
             tagsHtml += '</div>';
         }
@@ -710,11 +1160,15 @@ function renderTradeJournal() {
             <div class="journal-entry ${entryClass}">
                 <div class="je-header">
                     <span class="badge ${actionClass}">${action}</span>
+                    ${strategyHtml}
+                    ${outcomeHtml}
                     <span class="je-time">${e.timestamp ? shortDateTime(e.timestamp) : ''}</span>
                     ${e.shares ? `<span style="font-size:12px;color:var(--text2)">${e.shares} shares @ ${fmt(e.price || 0)}</span>` : ''}
                     ${pnlHtml}
                 </div>
-                ${e.reasoning ? `<div class="je-reasoning">${e.reasoning}</div>` : ''}
+                ${hypothesisHtml}
+                ${e.reasoning ? `<div class="je-reasoning">${escapeHtml(e.reasoning)}</div>` : ''}
+                ${expectedLearningHtml}
                 ${lessonHtml}
                 ${tagsHtml}
             </div>
@@ -751,7 +1205,7 @@ function renderTradeLog() {
                 <td><span class="badge ${badgeClass}">${action}</span></td>
                 <td>${t.shares || ''} shares @ ${fmt(t.price || 0)}<br><span style="font-size:11px;color:var(--text2)">Total: ${fmt(t.total_cost || 0)}</span></td>
                 <td>${pnlHtml}</td>
-                <td style="font-size:12px;color:var(--text2);max-width:300px">${shortReason}</td>
+                <td style="font-size:12px;color:var(--text2);max-width:300px">${escapeHtml(shortReason)}</td>
             </tr>
         `;
     });

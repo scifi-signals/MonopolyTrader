@@ -1,6 +1,6 @@
 """Dashboard reporter — generates JSON data for the dashboard.
 
-v5: Added Market Intelligence Document and daily briefing to dashboard data.
+v6: Added research metrics, shadow journal summary, thesis history to dashboard data.
 """
 
 import math
@@ -17,7 +17,7 @@ from .portfolio import (
     SNAPSHOTS_DIR
 )
 from .journal import load_journal, get_journal_stats
-from .thesis_builder import get_learning_metrics
+from .thesis_builder import get_learning_metrics, compute_research_metrics
 
 logger = setup_logging("reporter")
 
@@ -82,6 +82,30 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"Learning metrics failed: {e}")
 
+    # Research metrics (v6)
+    research_metrics = {}
+    try:
+        if thesis_ledger:
+            research_metrics = compute_research_metrics(thesis_ledger)
+    except Exception as e:
+        logger.warning(f"Research metrics failed: {e}")
+
+    # Shadow journal summary (v6)
+    shadow_summary = {}
+    try:
+        from .shadow_journal import get_shadow_summary
+        shadow_summary = get_shadow_summary(hours=24)
+    except Exception as e:
+        logger.warning(f"Shadow journal summary failed: {e}")
+
+    # Thesis history summary (v6)
+    thesis_history = ""
+    try:
+        from .analyst import get_thesis_history_summary
+        thesis_history = get_thesis_history_summary()
+    except Exception as e:
+        logger.warning(f"Thesis history failed: {e}")
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -95,6 +119,9 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "journal_stats": journal_stats,
         "thesis_ledger": thesis_ledger,
         "learning_metrics": learning_metrics,
+        "research_metrics": research_metrics,
+        "shadow_summary": shadow_summary,
+        "thesis_history": thesis_history,
         "market_intelligence": market_intelligence,
         "daily_briefing": daily_briefing,
         "performance_analytics": performance_analytics,

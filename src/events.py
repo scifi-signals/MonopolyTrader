@@ -3,11 +3,14 @@
 Provides upcoming event context so Claude knows when FOMC, CPI,
 and TSLA earnings are approaching. Static macro calendar (updated annually)
 plus live earnings dates from yfinance.
+
+v6.1: Added event impact measurement — tracks TSLA price changes on event days
+to build historical impact data for the agent's brief.
 """
 
 from datetime import datetime, timedelta
 import yfinance as yf
-from .utils import setup_logging
+from .utils import setup_logging, load_json, save_json, DATA_DIR
 
 logger = setup_logging("events")
 
@@ -58,6 +61,9 @@ NFP_2026 = [
 ]
 
 ALL_MACRO_EVENTS = FOMC_2026 + CPI_2026 + NFP_2026
+
+# v6.1 Blindspot #10: Event impact tracking
+EVENT_IMPACTS_PATH = DATA_DIR / "event_impacts.json"
 
 
 def get_upcoming_macro_events(hours: int = 48) -> list[dict]:
@@ -153,8 +159,14 @@ def get_upcoming_events(hours: int = 72) -> dict:
 
 
 def format_events_for_brief(events: dict) -> str:
-    """Format upcoming events as text for the Claude trading brief."""
+    """Format upcoming events as text for the Claude trading brief.
+
+    v6.1: Includes historical impact data for upcoming event types.
+    """
     parts = []
+
+    # Load historical event impacts
+    impacts = load_json(EVENT_IMPACTS_PATH, default={})
 
     # TSLA earnings
     earnings = events.get("tsla_earnings")
@@ -178,9 +190,157 @@ def format_events_for_brief(events: dict) -> str:
             else:
                 urgency = "Upcoming"
                 end = ""
-            parts.append(f"{urgency}: {event['event']} on {event['date']} ({hours:.0f}h away){end}")
+
+            # Add historical impact data if available
+            impact_str = _format_event_impact_history(event["event"], impacts)
+            parts.append(
+                f"{urgency}: {event['event']} on {event['date']} ({hours:.0f}h away){end}"
+                f"{impact_str}"
+            )
 
     if not parts:
         return "No major events in the next 72 hours."
 
     return "\n".join(parts)
+
+
+# === Event Impact Tracking (v6.1 Blindspot #10) ===
+
+
+def get_recent_past_events(days: int = 7) -> list[dict]:
+    """Return macro events that happened in the last N days.
+
+    v6.1 Blindspot #10: Identifies recent events for impact measurement.
+    """
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=days)
+    recent = []
+
+    for date_str, event_type in ALL_MACRO_EVENTS:
+        event_date = datetime.strptime(date_str, "%Y-%m-%d")
+        if cutoff <= event_date <= now:
+            days_ago = (now - event_date).days
+            recent.append({
+                "date": date_str,
+                "event": event_type,
+                "days_ago": days_ago,
+            })
+
+    recent.sort(key=lambda x: x["days_ago"])
+    return recent
+
+
+def record_event_impact(event_type: str, event_date: str, tsla_change_pct: float):
+    """Record the TSLA price change on an event day.
+
+    v6.1 Blindspot #10: Builds historical event impact data.
+
+    Args:
+        event_type: e.g. "CPI", "FOMC", "NFP"
+        event_date: ISO date string
+        tsla_change_pct: TSLA price change on that day (percent)
+    """
+    impacts = load_json(EVENT_IMPACTS_PATH, default={})
+
+    if event_type not in impacts:
+        impacts[event_type] = []
+
+    # Don't duplicate
+    existing_dates = {e["date"] for e in impacts[event_type]}
+    if event_date in existing_dates:
+        return
+
+    impacts[event_type].append({
+        "date": event_date,
+        "tsla_change_pct": round(tsla_change_pct, 2),
+    })
+
+    # Keep only last 20 events per type
+    if len(impacts[event_type]) > 20:
+        impacts[event_type] = impacts[event_type][-20:]
+
+    save_json(EVENT_IMPACTS_PATH, impacts)
+    logger.info(
+        f"Event impact recorded: {event_type} on {event_date}, "
+        f"TSLA {tsla_change_pct:+.2f}%"
+    )
+
+
+def measure_recent_event_impacts(ticker: str = "TSLA"):
+    """Check for recent events and record their TSLA price impact.
+
+    v6.1 Blindspot #10: Called during daily tasks to measure impact
+    of events that occurred in the past few days.
+    """
+    recent_events = get_recent_past_events(days=3)
+    if not recent_events:
+        return
+
+    impacts = load_json(EVENT_IMPACTS_PATH, default={})
+
+    for event in recent_events:
+        event_type = event["event"]
+        event_date = event["date"]
+
+        # Skip if already recorded
+        existing_dates = {e["date"] for e in impacts.get(event_type, [])}
+        if event_date in existing_dates:
+            continue
+
+        # Fetch TSLA price change on event day
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(start=event_date, period="5d", interval="1d")
+            if len(hist) >= 1:
+                # Find the event day row
+                for i, idx in enumerate(hist.index):
+                    if str(idx.date()) == event_date:
+                        if i > 0:
+                            prev_close = float(hist["Close"].iloc[i - 1])
+                            event_close = float(hist["Close"].iloc[i])
+                            change_pct = ((event_close - prev_close) / prev_close) * 100
+                        else:
+                            event_open = float(hist["Open"].iloc[i])
+                            event_close = float(hist["Close"].iloc[i])
+                            change_pct = ((event_close - event_open) / event_open) * 100
+
+                        record_event_impact(event_type, event_date, change_pct)
+                        break
+        except Exception as e:
+            logger.debug(f"Failed to measure impact for {event_type} on {event_date}: {e}")
+
+
+def get_event_impact_summary(event_type: str) -> dict | None:
+    """Get historical impact summary for an event type.
+
+    Returns dict with avg_change_pct, count, and recent entries.
+    Returns None if no data.
+    """
+    impacts = load_json(EVENT_IMPACTS_PATH, default={})
+    entries = impacts.get(event_type, [])
+
+    if not entries:
+        return None
+
+    changes = [e["tsla_change_pct"] for e in entries]
+    return {
+        "event_type": event_type,
+        "count": len(changes),
+        "avg_change_pct": round(sum(changes) / len(changes), 2),
+        "max_up": round(max(changes), 2),
+        "max_down": round(min(changes), 2),
+        "recent": entries[-3:],
+    }
+
+
+def _format_event_impact_history(event_type: str, impacts: dict) -> str:
+    """Format historical impact data for a specific event type."""
+    entries = impacts.get(event_type, [])
+    if not entries:
+        return ""
+
+    changes = [e["tsla_change_pct"] for e in entries]
+    avg = sum(changes) / len(changes)
+    n = len(changes)
+
+    return f"\n    Historical TSLA move on {event_type} days: avg {avg:+.2f}% (N={n})"

@@ -1,19 +1,21 @@
-# MonopolyTrader v5 — Informed Trading with Persistent Intelligence
+# MonopolyTrader v6 — Research-First Trading with Pattern Discovery
 
 ## Overview
 
-Autonomous AI paper trading agent. Manages $1,000 virtual portfolio trading TSLA. Claude makes every decision — no coded strategies, no stop losses. v5 adds persistent market intelligence, nightly research, and richer data sources.
+Autonomous AI paper trading agent. Manages $1,000 virtual portfolio trading TSLA. Claude is a RESEARCHER studying TSLA patterns — trades are experiments, not bets. The playbook is the primary output, not P&L.
 
 **Dashboard:** https://scifi-signals.github.io/MonopolyTrader/dashboard/
 **Server:** DigitalOcean (`science-intel`), systemd service `monopoly-trader` at `/root/monopoly-trader`
 
 ## Design Philosophy
 
+- **Researcher, not trader.** The agent studies patterns. Trades are experiments that generate data.
+- **HOLD is the default.** Every trade needs a specific, testable hypothesis with expected new learning.
+- **Don't repeat failed experiments.** If the playbook shows a pattern loses, trading it again wastes budget.
+- **Losses are fine if they teach something new.** Redundant losses are waste.
+- **Confidence = playbook win rate,** not narrative conviction.
 - Paper money = learning budget, not capital to preserve
-- Every scenario is an opportunity — trade aggressively to learn
-- Claude sees raw data AND accumulated intelligence — no amnesia between cycles
 - No stop losses — Claude evaluates underwater positions with context every cycle
-- Learning compounds: every trade feeds back into the intelligence system
 
 ## Three Rules (only 3)
 
@@ -21,70 +23,104 @@ Autonomous AI paper trading agent. Manages $1,000 virtual portfolio trading TSLA
 2. Keep $100 cash minimum
 3. Fractional shares OK
 
-## v5 Architecture
+## v6 Architecture
 
 ### Daily Cycle
 
-**9:00 AM — Pre-Market Research** (Haiku)
+**9:00 AM — Pre-Market Research** (Sonnet)
 - Reads Market Intelligence Document + pre-market price + overnight news
 - Produces daily briefing with scenarios, thesis status, recommended posture
 
-**Every 15 minutes — Trading Cycle** (Sonnet)
+**Every 15 minutes — Research Cycle** (Sonnet)
 1. Gather data — TSLA price/indicators + options + analyst consensus + institutional data + world + news + events
-2. Build brief — Market data + daily briefing + portfolio + playbook + journal
-3. Claude decides — System prompt includes Market Intelligence Document
-4. Execute trade — Simulate with slippage
-5. Record in journal — Tags computed, entry logged
-6. On trade close — Haiku lesson + immediate playbook rebuild
-7. Monitor portfolio health
-8. Update dashboard
+2. Compute tags — 11 market condition tags (including time_of_day, RSI divergence, news_catalyst)
+3. Build brief — Market data + daily briefing + portfolio + playbook (single + multi-tag) + shadow journal + journal
+4. Claude decides — System prompt includes Market Intelligence Document + researcher identity
+5. Execute trade — Simulate with slippage (if BUY/SELL)
+6. Record in journal — Tags, strategy, hypothesis, expected_learning logged
+7. Log HOLD to shadow journal — Tracks what would have happened
+8. Update shadow prices — Every cycle, updates recent HOLDs with current price
+9. On trade close — Haiku lesson + immediate playbook rebuild
+10. Monitor portfolio health
+11. Update dashboard
 
-**4:15 PM — Nightly Analysis** (Haiku)
-- Rebuilds playbook from all closed trades
-- Synthesizes today's trades, lessons, playbook stats, news into updated Market Intelligence Document
-- Evaluates thesis: confirm, adjust confidence, or flip direction
+**4:15 PM — Nightly Analysis** (Sonnet)
+- Archives current MID to mid_history.json (thesis versioning)
+- Rebuilds playbook from all closed trades (single-tag + multi-tag + strategy stats)
+- Synthesizes trades, lessons, playbook stats, shadow journal, research metrics, thesis history into updated MID
+- Recommends experiment priorities for tomorrow
+
+### Key v6 Additions
+
+**Shadow Journal** (`shadow_journal.py`, `data/hold_journal.json`)
+- Every HOLD decision logged with full market context
+- Shadow P&L computed: "if I'd bought at $X, price is now $Y"
+- Summary shows: HOLDs that avoided losses vs missed gains
+- Feeds into agent brief and nightly analyst
+
+**Multi-Tag Pattern Analysis** (`thesis_builder.py`)
+- 2-tag and 3-tag combination performance stats
+- Strategy-level aggregation (performance by named strategy)
+- `find_matching_patterns()` — returns all matching patterns for current conditions
+- Strong signals: "STRONG_AVOID" for N>=5 at <25% win rate
+
+**Thesis Versioning** (`analyst.py`, `data/mid_history.json`)
+- MID archived before every nightly update
+- Thesis history summary: direction, duration, flips
+- Thesis accuracy tracking (direction maintained rate)
+
+**Research Metrics** (`thesis_builder.py`)
+- Experiment efficiency: ratio of exploratory vs repeated conditions
+- Redundant loss rate: should be 0%
+- Pattern discovery count: confirmed patterns (N>=5, clear signal)
+- Calibration error: confidence vs actual win rate
+- Rolling win rate (last 10 trades)
+
+**Expanded Tags** (`tags.py`)
+- time_of_day: morning_open, midday, afternoon, close (Eastern time)
+- intraday_daily_divergence: aligned, mild, strong divergence between RSI timeframes
+- news_catalyst: highest-relevance catalyst type from news feed
 
 ### Market Intelligence Document (data/market_intelligence.json)
 
-Persistent JSON in the SYSTEM PROMPT. Updated nightly by Haiku. Contains:
+Persistent JSON in the SYSTEM PROMPT. Updated nightly. Contains:
 - **Thesis**: direction (bull/bear/neutral), confidence (0.3-0.9), evidence, invalidation criteria
 - **Key levels**: support/resistance from recent price action
 - **Active catalysts**: what's driving TSLA right now
 - **Sector context**: EV sector and macro positioning
 - **Lessons synthesis**: patterns from recent trade lessons
 - **What's working/not working**: from playbook stats
-
-Rules for thesis updates:
-- 3+ consecutive losses OR major catalyst to flip direction
-- P&L-based confidence decay (negative P&L over 7 days → lower confidence)
-- Always includes contradicting evidence
+- **Experiment priorities**: what to test tomorrow (v6)
 
 ## File Structure
 
 ```
 src/
-├── main.py          — Scheduler: 15min cycles + 9AM pre-market + 4:15PM nightly
-├── analyst.py       — NEW: Nightly MID update + pre-market briefing (Haiku)
-├── agent.py         — SYSTEM_PROMPT (with MID) + build_market_brief() + make_decision()
-├── tags.py          — Mechanical trade tagging (8 market condition tags)
-├── thesis_builder.py — Playbook aggregation (rebuilds on every trade close)
-├── market_data.py   — Prices, indicators, regime, world, options, analyst, institutional
-├── portfolio.py     — 2-rule validation, execute_trade(), cooldown
-├── journal.py       — Trade journal with tags, Haiku lessons, get_entries_since()
-├── events.py        — FOMC/CPI/NFP calendar + TSLA earnings
-├── news_feed.py     — yfinance + RSS news
-├── web_search.py    — Web search (disabled)
-├── reporter.py      — Dashboard data generation
-├── observability.py — Health checks
-└── utils.py         — Config, logging, AI call helpers (supports model override)
+├── main.py            — Scheduler: 15min cycles + 9AM pre-market + 4:15PM nightly
+├── analyst.py         — Nightly MID update + pre-market briefing + thesis versioning
+├── agent.py           — SYSTEM_PROMPT (researcher identity) + build_market_brief() + make_decision()
+├── shadow_journal.py  — NEW: HOLD decision tracking + shadow P&L
+├── tags.py            — Mechanical trade tagging (11 market condition tags)
+├── thesis_builder.py  — Playbook: single-tag + multi-tag + strategy stats + research metrics
+├── market_data.py     — Prices, indicators, regime, world, options, analyst, institutional
+├── portfolio.py       — 2-rule validation, execute_trade(), cooldown
+├── journal.py         — Trade journal with tags, strategy, hypothesis, Haiku lessons
+├── events.py          — FOMC/CPI/NFP calendar + TSLA earnings
+├── news_feed.py       — yfinance + RSS news
+├── web_search.py      — Web search (disabled)
+├── reporter.py        — Dashboard data generation (includes research metrics + shadow)
+├── observability.py   — Health checks
+└── utils.py           — Config, logging, AI call helpers (supports model override)
 
 data/
 ├── market_intelligence.json — Persistent MID (updated nightly)
+├── mid_history.json         — NEW: MID version history (thesis changes over time)
 ├── daily_briefing.json      — Today's pre-market analysis
+├── hold_journal.json        — NEW: Shadow journal (HOLD decisions + shadow P&L)
 ├── portfolio.json           — Current portfolio state
 ├── transactions.json        — Full trade history
-├── trade_journal.json       — Journal entries with tags and lessons
-├── thesis_ledger.json       — Playbook stats (rebuilt on every trade close)
+├── trade_journal.json       — Journal entries with tags, strategy, hypothesis, lessons
+├── thesis_ledger.json       — Playbook stats (single + multi-tag + strategies)
 ├── snapshots/               — Daily portfolio snapshots
 └── latest_cycle.json        — Last decision for dashboard
 ```
@@ -92,8 +128,8 @@ data/
 ## What Claude Sees Each Cycle
 
 **System Prompt (persistent context):**
-- Trading rules (3 rules)
-- Market Intelligence Document (thesis, levels, catalysts, lessons, what works)
+- Researcher identity and principles (HOLD default, no repeat experiments, etc.)
+- Market Intelligence Document (thesis, levels, catalysts, lessons, experiment priorities)
 
 **User Prompt (per cycle):**
 - Today's daily briefing (scenarios, thesis status, posture)
@@ -105,9 +141,25 @@ data/
 - Regime classification
 - News (yfinance + RSS, classified by catalyst type)
 - Upcoming events (FOMC, CPI, NFP, TSLA earnings)
-- Playbook (statistical performance by market condition)
+- Playbook (single-tag + multi-tag patterns + strategy stats + research metrics)
+- Shadow journal summary (HOLD outcomes: avoided losses vs missed gains)
 - Portfolio state + position limits
-- Last 5 trades with lessons
+- Last 5 trades with hypotheses and lessons
+
+## JSON Response Format
+
+```json
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "shares": 0.5,
+  "confidence": 0.35,
+  "strategy": "mean_reversion_oversold",
+  "hypothesis": "RSI divergence in range-bound market predicts reversal within 2 hours",
+  "expected_learning": "Tests whether intraday RSI < 30 with daily RSI > 50 signals a bounce",
+  "reasoning": "Playbook shows 0/3 wins in similar conditions but only 3 trades — need more data...",
+  "risk_note": "If price breaks below support at $340, hypothesis is refuted"
+}
+```
 
 ## Key Commands
 
@@ -129,14 +181,16 @@ tail -f /root/monopoly-trader/logs/agent.log
 
 ## Success Benchmark
 
-Beat buy-and-hold TSLA over rolling 30-day windows, measured by:
-- Total return vs buy-and-hold
-- Max drawdown
-- Win rate on closed trades
-- Sharpe ratio
+v6 success = pattern discovery rate, not P&L.
+- Patterns discovered (N>=5 with clear signal)
+- Experiment efficiency (% of trades exploring new conditions)
+- Redundant loss rate (should be 0%)
+- Calibration error (confidence vs actual outcomes)
+- Hold quality (% of HOLDs that correctly avoided losses)
+- Also: total return, max drawdown, win rate, Sharpe ratio
 
 ## Cost
 
-- ~$0.30/day Sonnet (26 cycles × ~2500 token brief)
-- ~$0.07/day Haiku (nightly analyst + pre-market + trade lessons)
+- ~$0.30/day Sonnet (26 cycles x ~3000 token brief)
+- ~$0.07/day Haiku (trade lessons)
 - ~$8.50/month total

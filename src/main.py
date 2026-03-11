@@ -1,12 +1,14 @@
-"""MonopolyTrader v5 — main entry point.
+"""MonopolyTrader v6 — main entry point.
 
 Every 15 minutes during market hours (with anti-churn cooldowns):
   1. Gather data (TSLA + world + news + web search)
-  2. Build brief (raw data + portfolio + journal + spread cost)
+  2. Build brief (raw data + portfolio + journal + spread cost + shadow journal)
   3. Claude decides (BUY / SELL / HOLD)
   4. Execute trade if any
-  5. Record in journal
-  6. Update dashboard
+  5. Record in journal (with strategy field)
+  6. Log HOLD decisions to shadow journal
+  7. Update shadow prices for recent HOLDs
+  8. Update dashboard
 """
 
 import argparse
@@ -30,11 +32,13 @@ from .web_search import search_tsla_news
 from .events import get_upcoming_events
 from .tags import compute_tags
 from .analyst import run_nightly_update, run_pre_market
+from .shadow_journal import log_hold_decision, update_shadow_prices
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
     get_recent_entries,
     load_journal,
+    update_intra_trade_prices,
 )
 
 logger = setup_logging("main")
@@ -53,7 +57,7 @@ signal.signal(signal.SIGTERM, _signal_handler)
 
 
 def run_cycle():
-    """The v4 trading cycle. Runs every 15 minutes during market hours."""
+    """The v6 research cycle. Runs every 15 minutes during market hours."""
     config = load_config()
     ticker = config["ticker"]
 
@@ -61,7 +65,7 @@ def run_cycle():
         return
 
     try:
-        logger.info("--- v5 Decision Cycle ---")
+        logger.info("--- v6 Research Cycle ---")
 
         # 1. Gather data
         market_data = get_market_summary(ticker)
@@ -119,11 +123,47 @@ def run_cycle():
             config.get("journal", {}).get("max_entries_in_brief", 5)
         )
 
-        # 4. Check cooldown
+        # 4. Intra-trade price tracking — runs every cycle including cooldown (v6.1 Blindspot #3)
+        try:
+            holdings = portfolio.get("holdings", {}).get(ticker, {})
+            if holdings.get("shares", 0) > 0:
+                update_intra_trade_prices(current_price, ticker)
+        except Exception as e:
+            logger.debug(f"Intra-trade price update failed: {e}")
+
+        # 4a. Check cooldown
         if not check_cooldown(ticker):
-            logger.info("Cooldown active — skipping Claude call")
+            logger.info("Cooldown active -- skipping Claude call")
+            # Still update shadow prices even during cooldown
+            try:
+                update_shadow_prices(current_price)
+            except Exception as e:
+                logger.warning(f"Shadow price update failed: {e}")
             _update_dashboard(market_data, portfolio)
             return
+
+        # 4c. Fetch options data for tags + brief (v6.1 Blindspot #4)
+        options_data = None
+        try:
+            from .market_data import get_options_snapshot
+            options_data = get_options_snapshot(ticker)
+        except Exception as e:
+            logger.debug(f"Options data for tags failed: {e}")
+
+        # 4d. Compute pre-decision tags for pattern matching
+        #     (action="HOLD" since we don't know the decision yet)
+        from .thesis_builder import find_matching_patterns, format_matching_patterns_for_brief
+        pre_decision_tags = compute_tags(
+            market_data=market_data,
+            world=world,
+            portfolio=portfolio,
+            config=config,
+            events=events,
+            action="HOLD",
+            news_feed=news_feed,
+            options_data=options_data,
+        )
+        matched_patterns = find_matching_patterns(pre_decision_tags)
 
         # 5. Claude decides
         decision = make_decision(
@@ -135,10 +175,24 @@ def run_cycle():
             journal_entries=journal_entries,
             config=config,
             events=events,
+            matched_patterns=matched_patterns,
+            options_data=options_data,
         )
 
         action = decision.get("action", "HOLD")
         shares = decision.get("shares", 0)
+
+        # Compute tags for this cycle (used for trades AND hold logging)
+        cycle_tags = compute_tags(
+            market_data=market_data,
+            world=world,
+            portfolio=portfolio,
+            config=config,
+            events=events,
+            action=action,
+            news_feed=news_feed,
+            options_data=options_data,
+        )
 
         # 6. Execute
         if action in ("BUY", "SELL") and shares > 0:
@@ -162,17 +216,10 @@ def run_cycle():
                 if spy_data:
                     market_snapshot += f", SPY {spy_data.get('change_pct', 0):+.2f}%"
 
-                # Compute tags for thesis ledger
-                trade_tags = compute_tags(
-                    market_data=market_data,
-                    world=world,
-                    portfolio=portfolio,
-                    config=config,
-                    events=events,
-                    action=action,
-                )
+                # v6.1 Blindspot #9: Check thesis consistency
+                thesis_consistent = _check_thesis_consistency(action, portfolio, ticker)
 
-                # Record in journal
+                # Record in journal (with strategy field preserved)
                 journal_add_entry(
                     trade_id=txn["id"],
                     action=action,
@@ -183,7 +230,11 @@ def run_cycle():
                     confidence=decision.get("confidence", 0),
                     portfolio_value=result["portfolio"]["total_value"],
                     market_snapshot=market_snapshot,
-                    tags=trade_tags,
+                    tags=cycle_tags,
+                    strategy=decision.get("strategy", ""),
+                    hypothesis=decision.get("hypothesis", ""),
+                    expected_learning=decision.get("expected_learning", ""),
+                    thesis_consistent=thesis_consistent,
                 )
 
                 # If this was a SELL, close the corresponding BUY journal entry
@@ -201,21 +252,41 @@ def run_cycle():
             elif result["status"] == "rejected":
                 logger.warning(f"Trade rejected: {result['reason']}")
         else:
+            # HOLD decision
             strategy = decision.get("strategy", "")
+            hypothesis = decision.get("hypothesis", "")
             reasoning = decision.get("reasoning", "N/A")[:120]
             logger.info(f"HOLD [{strategy}] — {reasoning}")
 
-        # 7. Save latest cycle for dashboard
+            # Log HOLD to shadow journal
+            try:
+                log_hold_decision(
+                    decision=decision,
+                    market_data=market_data,
+                    tags=cycle_tags,
+                )
+            except Exception as e:
+                logger.warning(f"Shadow journal logging failed: {e}")
+
+        # 7. Update shadow prices for all recent HOLDs (every cycle)
+        try:
+            updated_count = update_shadow_prices(current_price)
+            if updated_count > 0:
+                logger.debug(f"Shadow journal: updated {updated_count} HOLD entries")
+        except Exception as e:
+            logger.warning(f"Shadow price update failed: {e}")
+
+        # 8. Save latest cycle for dashboard
         _save_latest_cycle(decision, market_data, regime, world)
 
-        # 8. Monitor portfolio health
+        # 9. Monitor portfolio health
         _check_portfolio_health(portfolio)
 
-        # 9. Update dashboard
+        # 10. Update dashboard
         _update_dashboard(market_data, portfolio)
 
     except Exception as e:
-        logger.error(f"v5 decision cycle error: {e}", exc_info=True)
+        logger.error(f"v6 research cycle error: {e}", exc_info=True)
 
 
 def _close_journal_for_sell(sell_txn: dict):
@@ -235,6 +306,52 @@ def _close_journal_for_sell(sell_txn: dict):
     logger.warning(f"No open BUY journal entry found to close for {sell_txn['id']}")
 
 
+def _check_thesis_consistency(action: str, portfolio: dict, ticker: str) -> bool | None:
+    """Check if a trade action is consistent with the current MID thesis.
+
+    v6.1 Blindspot #9: Thesis consistency scoring.
+
+    Returns:
+        True if consistent, False if inconsistent, None if unknown.
+    """
+    try:
+        from .analyst import load_mid
+        mid = load_mid()
+        if not mid or not mid.get("thesis"):
+            return None
+
+        direction = mid["thesis"].get("direction", "neutral")
+
+        if direction == "neutral":
+            return True  # Neutral thesis is consistent with any action
+
+        # Check if this is a new position vs closing existing
+        holdings = portfolio.get("holdings", {}).get(ticker, {})
+        has_position = holdings.get("shares", 0) > 0.0001
+
+        if action == "BUY":
+            if direction == "bearish":
+                # Buying when thesis is bearish = inconsistent
+                # Unless this is a very specific contrarian play
+                logger.info("Thesis inconsistency: BUY while MID is bearish")
+                return False
+            return True
+
+        elif action == "SELL":
+            if direction == "bullish" and has_position:
+                # Could be taking profit on an existing position — that's fine
+                # But opening a new short-side bet is inconsistent
+                # Since we don't short, SELL always means closing a long
+                # Selling when bullish = potentially inconsistent
+                logger.info("Thesis inconsistency: SELL while MID is bullish")
+                return False
+            return True
+
+        return None
+    except Exception:
+        return None
+
+
 def _save_latest_cycle(decision: dict, market_data: dict, regime: dict, world: dict):
     """Save the latest cycle data for the dashboard Agent's Mind card."""
     cycle_data = {
@@ -243,6 +360,8 @@ def _save_latest_cycle(decision: dict, market_data: dict, regime: dict, world: d
         "shares": decision.get("shares", 0),
         "confidence": decision.get("confidence", 0),
         "strategy": decision.get("strategy", ""),
+        "hypothesis": decision.get("hypothesis", ""),
+        "expected_learning": decision.get("expected_learning", ""),
         "reasoning": decision.get("reasoning", ""),
         "risk_note": decision.get("risk_note", ""),
         "price": market_data.get("current", {}).get("price", 0),
@@ -268,9 +387,9 @@ def _check_portfolio_health(portfolio: dict):
     starting = config.get("starting_balance", 1000)
 
     if value < starting * 0.7:
-        logger.error(f"ALERT: Portfolio at ${value:.2f} — 30%+ drawdown from ${starting}")
+        logger.error(f"ALERT: Portfolio at ${value:.2f} -- 30%+ drawdown from ${starting}")
     elif value < starting * 0.8:
-        logger.warning(f"WARNING: Portfolio at ${value:.2f} — 20%+ drawdown from ${starting}")
+        logger.warning(f"WARNING: Portfolio at ${value:.2f} -- 20%+ drawdown from ${starting}")
 
     # Check for consecutive losses
     transactions = load_portfolio().get("total_trades", 0)
@@ -310,10 +429,19 @@ def run_daily_tasks():
         ledger = build_ledger()
         logger.info(
             f"Thesis ledger rebuilt: {ledger.get('active_trades', 0)} active trades, "
-            f"{len(ledger.get('theses', {}))} theses"
+            f"{len(ledger.get('theses', {}))} theses, "
+            f"{len(ledger.get('multi_tag_patterns', {}))} multi-tag patterns"
         )
     except Exception as e:
         logger.warning(f"Thesis ledger build failed: {e}")
+
+    # v6.1 Blindspot #10: Measure event impacts from recent days
+    try:
+        from .events import measure_recent_event_impacts
+        measure_recent_event_impacts()
+        logger.info("Event impact measurement complete")
+    except Exception as e:
+        logger.debug(f"Event impact measurement failed: {e}")
 
     # Run nightly analyst — update Market Intelligence Document
     try:
@@ -333,7 +461,7 @@ def run_daily_tasks():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MonopolyTrader v5")
+    parser = argparse.ArgumentParser(description="MonopolyTrader v6")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--report", action="store_true", help="Generate dashboard and exit")
     parser.add_argument("--analyst", action="store_true", help="Run nightly analyst and exit")
@@ -341,7 +469,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
-    logger.info("MonopolyTrader v5 starting")
+    logger.info("MonopolyTrader v6 starting")
 
     # Ensure data directories exist
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -380,7 +508,7 @@ def main():
         schedule.run_pending()
         time.sleep(10)
 
-    logger.info("MonopolyTrader v5 stopped")
+    logger.info("MonopolyTrader v6 stopped")
 
 
 if __name__ == "__main__":

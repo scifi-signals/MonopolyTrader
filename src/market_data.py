@@ -263,6 +263,52 @@ def classify_regime(macro_data: dict = None, daily_df: pd.DataFrame = None) -> d
     return regime
 
 
+def classify_intraday_regime(ticker: str) -> dict:
+    """Compute intraday regime classification from 5-minute candles.
+
+    v6.1 Blindspot #5: The daily ADX is stale for intraday decisions.
+    This computes an ADX-equivalent from intraday data.
+
+    Returns dict with intraday_adx and intraday_directional fields.
+    """
+    result = {
+        "intraday_adx": None,
+        "intraday_directional": None,
+    }
+
+    try:
+        intraday_df = get_intraday(ticker, interval="5m")
+        if len(intraday_df) < 28:
+            logger.debug(f"Not enough intraday bars for ADX: {len(intraday_df)}")
+            return result
+
+        adx_ind = ta.trend.ADXIndicator(
+            intraday_df["High"], intraday_df["Low"], intraday_df["Close"],
+            window=14,
+        )
+        adx_series = adx_ind.adx().dropna()
+
+        if len(adx_series) >= 1:
+            intraday_adx = float(adx_series.iloc[-1])
+            result["intraday_adx"] = round(intraday_adx, 2)
+
+            if intraday_adx >= 25:
+                result["intraday_directional"] = "trending"
+            elif intraday_adx <= 20:
+                result["intraday_directional"] = "range_bound"
+            else:
+                result["intraday_directional"] = "mixed"
+
+            logger.debug(
+                f"Intraday regime: ADX={intraday_adx:.1f} -> {result['intraday_directional']}"
+            )
+
+    except Exception as e:
+        logger.debug(f"Intraday regime classification failed: {e}")
+
+    return result
+
+
 def get_market_summary(ticker: str) -> dict:
     """Bundle current price + indicators + macro regime into one payload."""
     current = get_current_price(ticker)
@@ -298,6 +344,13 @@ def get_market_summary(ticker: str) -> dict:
         logger.warning(f"Macro/regime classification failed: {e}")
         macro = {"spy_change_pct": 0, "vix_level": 0, "fetched": False}
         regime = {"trend": "unknown", "volatility": "unknown", "vix": 0}
+
+    # v6.1 Blindspot #5: Add intraday regime classification
+    try:
+        intraday_regime = classify_intraday_regime(ticker)
+        regime.update(intraday_regime)
+    except Exception as e:
+        logger.debug(f"Intraday regime failed: {e}")
 
     return {
         "ticker": ticker,

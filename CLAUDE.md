@@ -52,6 +52,13 @@ Autonomous AI paper trading agent. Manages $1,000 virtual portfolio trading TSLA
 
 ### Key v6 Additions
 
+**Prediction Tracking** (`prediction_tracker.py`, `data/predictions.json`)
+- Every cycle (BUY/SELL/HOLD), Claude predicts TSLA direction + magnitude over 1-4 cycles
+- Predictions scored against reality: direction correct? magnitude correct?
+- Prediction scorecard in brief shows accuracy by market condition
+- Turns 26 daily cycles into 26 learning opportunities (vs ~1 from trades)
+- Feeds into nightly analyst (where reads are strong/weak) and dashboard
+
 **Shadow Journal** (`shadow_journal.py`, `data/hold_journal.json`)
 - Every HOLD decision logged with full market context
 - Shadow P&L computed: "if I'd bought at $X, price is now $Y"
@@ -99,7 +106,8 @@ src/
 ├── main.py            — Scheduler: 15min cycles + 9AM pre-market + 4:15PM nightly
 ├── analyst.py         — Nightly MID update + pre-market briefing + thesis versioning
 ├── agent.py           — SYSTEM_PROMPT (researcher identity) + build_market_brief() + make_decision()
-├── shadow_journal.py  — NEW: HOLD decision tracking + shadow P&L
+├── prediction_tracker.py — Prediction logging, scoring, scorecard
+├── shadow_journal.py  — HOLD decision tracking + shadow P&L
 ├── tags.py            — Mechanical trade tagging (11 market condition tags)
 ├── thesis_builder.py  — Playbook: single-tag + multi-tag + strategy stats + research metrics
 ├── market_data.py     — Prices, indicators, regime, world, options, analyst, institutional
@@ -116,7 +124,8 @@ data/
 ├── market_intelligence.json — Persistent MID (updated nightly)
 ├── mid_history.json         — NEW: MID version history (thesis changes over time)
 ├── daily_briefing.json      — Today's pre-market analysis
-├── hold_journal.json        — NEW: Shadow journal (HOLD decisions + shadow P&L)
+├── predictions.json          — Prediction log (every cycle, scored against reality)
+├── hold_journal.json        — Shadow journal (HOLD decisions + shadow P&L)
 ├── portfolio.json           — Current portfolio state
 ├── transactions.json        — Full trade history
 ├── trade_journal.json       — Journal entries with tags, strategy, hypothesis, lessons
@@ -157,7 +166,13 @@ data/
   "hypothesis": "RSI divergence in range-bound market predicts reversal within 2 hours",
   "expected_learning": "Tests whether intraday RSI < 30 with daily RSI > 50 signals a bounce",
   "reasoning": "Playbook shows 0/3 wins in similar conditions but only 3 trades — need more data...",
-  "risk_note": "If price breaks below support at $340, hypothesis is refuted"
+  "risk_note": "If price breaks below support at $340, hypothesis is refuted",
+  "prediction": {
+    "direction": "up",
+    "magnitude": "small",
+    "cycles": 2,
+    "basis": "RSI divergence reverting toward daily mean"
+  }
 }
 ```
 

@@ -36,6 +36,7 @@ You will receive:
 - Current PLAYBOOK STATS (win rates by market condition, including multi-tag patterns)
 - SHADOW JOURNAL summary (what happened during HOLD decisions)
 - RESEARCH METRICS (experiment efficiency, redundant losses, calibration)
+- PREDICTION ACCURACY (direction and magnitude accuracy by market condition — where the researcher reads the market well vs poorly)
 - THESIS HISTORY (how long the current thesis has held, previous thesis performance)
 - OVERNIGHT NEWS headlines
 - Current TSLA PRICE and KEY INDICATORS
@@ -356,6 +357,31 @@ def run_nightly_update():
     except Exception as e:
         logger.debug(f"Research metrics unavailable: {e}")
 
+    # Prediction accuracy
+    prediction_text = "Prediction tracking not yet available."
+    try:
+        from .prediction_tracker import get_prediction_summary, get_prediction_accuracy_by_tags
+        pred_summary = get_prediction_summary(hours=24)
+        if pred_summary.get("resolved", 0) > 0:
+            lines = [
+                f"Today: {pred_summary['resolved']} predictions resolved",
+                f"Direction accuracy: {pred_summary['direction_accuracy']:.0%}",
+                f"Avg score: {pred_summary['avg_score']:.2f}",
+            ]
+            if pred_summary.get("overpredict_magnitude"):
+                lines.append("Systematic bias: over-predicting magnitude")
+            pred_by_tags = get_prediction_accuracy_by_tags(min_count=3)
+            if pred_by_tags:
+                best = sorted(pred_by_tags.items(), key=lambda x: x[1]["direction_accuracy"], reverse=True)[:3]
+                worst = sorted(pred_by_tags.items(), key=lambda x: x[1]["direction_accuracy"])[:3]
+                if best:
+                    lines.append("Best reads: " + ", ".join(f"{k} ({v['direction_accuracy']:.0%})" for k, v in best))
+                if worst:
+                    lines.append("Weak reads: " + ", ".join(f"{k} ({v['direction_accuracy']:.0%})" for k, v in worst))
+            prediction_text = "\n".join(lines)
+    except Exception as e:
+        logger.debug(f"Prediction summary unavailable: {e}")
+
     # Thesis history
     thesis_history_text = get_thesis_history_summary()
 
@@ -392,6 +418,9 @@ def run_nightly_update():
 
 === RESEARCH METRICS ===
 {metrics_text}
+
+=== PREDICTION ACCURACY ===
+{prediction_text}
 
 === THESIS HISTORY ===
 {thesis_history_text}

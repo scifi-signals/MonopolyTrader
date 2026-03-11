@@ -33,6 +33,7 @@ from .events import get_upcoming_events
 from .tags import compute_tags
 from .analyst import run_nightly_update, run_pre_market
 from .shadow_journal import log_hold_decision, update_shadow_prices
+from .prediction_tracker import log_prediction, update_predictions
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
@@ -134,11 +135,15 @@ def run_cycle():
         # 4a. Check cooldown
         if not check_cooldown(ticker):
             logger.info("Cooldown active -- skipping Claude call")
-            # Still update shadow prices even during cooldown
+            # Still update shadow prices and predictions during cooldown
             try:
                 update_shadow_prices(current_price)
             except Exception as e:
                 logger.warning(f"Shadow price update failed: {e}")
+            try:
+                update_predictions(current_price)
+            except Exception as e:
+                logger.warning(f"Prediction update during cooldown failed: {e}")
             _update_dashboard(market_data, portfolio)
             return
 
@@ -193,6 +198,17 @@ def run_cycle():
             news_feed=news_feed,
             options_data=options_data,
         )
+
+        # 5b. Log prediction (every cycle, BUY/SELL/HOLD)
+        try:
+            log_prediction(
+                decision=decision,
+                market_data=market_data,
+                tags=cycle_tags,
+                current_price=current_price,
+            )
+        except Exception as e:
+            logger.warning(f"Prediction logging failed: {e}")
 
         # 6. Execute
         if action in ("BUY", "SELL") and shares > 0:
@@ -275,6 +291,14 @@ def run_cycle():
                 logger.debug(f"Shadow journal: updated {updated_count} HOLD entries")
         except Exception as e:
             logger.warning(f"Shadow price update failed: {e}")
+
+        # 7b. Update and resolve pending predictions (every cycle)
+        try:
+            resolved_count = update_predictions(current_price)
+            if resolved_count > 0:
+                logger.info(f"Predictions: resolved {resolved_count}")
+        except Exception as e:
+            logger.warning(f"Prediction update failed: {e}")
 
         # 8. Save latest cycle for dashboard
         _save_latest_cycle(decision, market_data, regime, world)
@@ -442,6 +466,13 @@ def run_daily_tasks():
         logger.info("Event impact measurement complete")
     except Exception as e:
         logger.debug(f"Event impact measurement failed: {e}")
+
+    # Prune old predictions
+    try:
+        from .prediction_tracker import prune_predictions
+        prune_predictions(days=30)
+    except Exception as e:
+        logger.debug(f"Prediction pruning failed: {e}")
 
     # Run nightly analyst — update Market Intelligence Document
     try:

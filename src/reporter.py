@@ -106,6 +106,14 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"Thesis history failed: {e}")
 
+    # Prediction accuracy (v6.1)
+    prediction_summary = {}
+    try:
+        from .prediction_tracker import get_prediction_summary
+        prediction_summary = get_prediction_summary(hours=72)
+    except Exception as e:
+        logger.warning(f"Prediction summary failed: {e}")
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -122,6 +130,7 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "research_metrics": research_metrics,
         "shadow_summary": shadow_summary,
         "thesis_history": thesis_history,
+        "prediction_summary": prediction_summary,
         "market_intelligence": market_intelligence,
         "daily_briefing": daily_briefing,
         "performance_analytics": performance_analytics,

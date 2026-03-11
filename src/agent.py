@@ -56,6 +56,14 @@ Your brief includes research efficiency metrics. Pay attention to:
 - Redundant loss rate: this should be 0%. Any loss in a known-losing pattern is waste.
 - Calibration error: does your stated confidence match actual outcomes?
 
+## PREDICTIONS
+Every cycle you MUST output a short-term price prediction. This is separate from your trade decision — it's about what you think the price will do regardless of whether you trade. Your predictions are scored against reality and the results appear in your PREDICTION SCORECARD.
+
+This is how you learn from EVERY cycle, not just trades. 26 cycles per day = 26 prediction data points. Pay attention to your scorecard — if you're 80% accurate on direction in trending markets but 30% in range-bound, that tells you where your understanding is strong vs weak.
+
+Magnitude thresholds: "small" = 0.2-0.5% move, "moderate" = 0.5-1.5%, "large" = >1.5%. Direction "flat" = <0.2% move.
+Cycles: 1-4 (15min to 1hr). Shorter timeframe = bolder prediction = more learning.
+
 Respond ONLY with valid JSON:
 {
   "action": "BUY" | "SELL" | "HOLD",
@@ -65,7 +73,13 @@ Respond ONLY with valid JSON:
   "hypothesis": "<specific testable hypothesis for this trade, or 'N/A - observing' for HOLD>",
   "expected_learning": "<what new data this trade will add to the playbook, or what you're watching for during HOLD>",
   "reasoning": "<your analysis: current market conditions, what your playbook says about these conditions, why this experiment is or isn't worth running>",
-  "risk_note": "<what could go wrong, and what outcome would refute your hypothesis>"
+  "risk_note": "<what could go wrong, and what outcome would refute your hypothesis>",
+  "prediction": {
+    "direction": "up" | "down" | "flat",
+    "magnitude": "small" | "moderate" | "large",
+    "cycles": <int 1-4, how many 15-min cycles until evaluation>,
+    "basis": "<1 sentence: what signal drives this prediction>"
+  }
 }"""
 
 
@@ -390,6 +404,17 @@ def build_market_brief(
     except Exception:
         pass
 
+    # === Prediction Scorecard ===
+    try:
+        from .prediction_tracker import format_prediction_scorecard
+        scorecard = format_prediction_scorecard(hours=72)
+        if scorecard:
+            parts.append("")
+            parts.append("=== YOUR PREDICTION SCORECARD (last 3 days) ===")
+            parts.append(scorecard)
+    except Exception:
+        pass
+
     # === Trade Journal ===
     parts.append("")
     parts.append("=== YOUR TRADE JOURNAL (last 5) ===")
@@ -572,7 +597,7 @@ def make_decision(
         raw, model_used = call_ai_with_fallback(
             system=system,
             user=brief,
-            max_tokens=1000,
+            max_tokens=1200,
             config=config,
         )
 
@@ -597,10 +622,29 @@ def make_decision(
 
         decision["_model_version"] = model_used
 
+        # Validate prediction field
+        pred = decision.get("prediction")
+        if not pred or not isinstance(pred, dict):
+            decision["prediction"] = {
+                "direction": "flat", "magnitude": "small",
+                "cycles": 1, "basis": "no prediction provided",
+            }
+        else:
+            if pred.get("direction") not in ("up", "down", "flat"):
+                pred["direction"] = "flat"
+            if pred.get("magnitude") not in ("small", "moderate", "large"):
+                pred["magnitude"] = "small"
+            if pred.get("direction") == "flat":
+                pred["magnitude"] = "flat"
+            cycles = pred.get("cycles", 2)
+            pred["cycles"] = max(1, min(4, int(cycles) if isinstance(cycles, (int, float)) else 2))
+
         logger.info(
             f"Decision: {decision.get('action')} "
             f"{decision.get('shares', 0):.4f} shares, "
-            f"confidence={decision.get('confidence', 0):.2f}"
+            f"confidence={decision.get('confidence', 0):.2f}, "
+            f"prediction={decision.get('prediction', {}).get('direction', '?')}/"
+            f"{decision.get('prediction', {}).get('magnitude', '?')}"
         )
 
         return decision

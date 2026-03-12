@@ -108,15 +108,16 @@ def _find_matching_hypothesis(ledger: dict, category: str, condition_key: tuple)
     return None
 
 
-def log_hypothesis(decision: dict, tags: dict):
+def log_hypothesis(decision: dict, tags: dict, trade_id: str = None):
     """Log a hypothesis from a decision (BUY, SELL, or HOLD).
 
     Extracts hypothesis text and conditions, finds or creates a matching
-    hypothesis entry, increments test count.
+    hypothesis entry, increments test count, links to trade_id.
 
     Args:
         decision: Claude's decision dict (must include 'hypothesis')
         tags: Current market condition tags
+        trade_id: The trade ID to link this hypothesis to
     """
     hypothesis_text = decision.get("hypothesis", "")
     if not hypothesis_text or hypothesis_text.lower() in ("n/a", "n/a - observing", ""):
@@ -137,6 +138,12 @@ def log_hypothesis(decision: dict, tags: dict):
         # Update text if this one is more descriptive
         if len(hypothesis_text) > len(hyp.get("text", "")):
             hyp["text"] = hypothesis_text[:300]
+        # Link trade_id
+        if trade_id:
+            source_ids = hyp.get("source_trade_ids", [])
+            if trade_id not in source_ids:
+                source_ids.append(trade_id)
+                hyp["source_trade_ids"] = source_ids[-10:]
     else:
         # Create new hypothesis
         hyp_id = f"hyp_{ledger['next_id']:04d}"
@@ -153,7 +160,7 @@ def log_hypothesis(decision: dict, tags: dict):
             "confirmations": 0,
             "refutations": 0,
             "confirmation_rate": 0.0,
-            "source_trade_ids": [],
+            "source_trade_ids": [trade_id] if trade_id else [],
         }
 
     _save_ledger(ledger)
@@ -162,8 +169,8 @@ def log_hypothesis(decision: dict, tags: dict):
 def resolve_hypothesis(trade_id: str, pnl: float):
     """Resolve a hypothesis when a trade closes.
 
-    Marks the most recent active hypothesis as confirmed (if profitable)
-    or refuted (if losing).
+    First tries to find the hypothesis linked to this trade_id.
+    Falls back to the most recently tested active hypothesis.
 
     Args:
         trade_id: The trade ID that closed
@@ -172,17 +179,27 @@ def resolve_hypothesis(trade_id: str, pnl: float):
     ledger = _load_ledger()
     outcome = "confirmed" if pnl >= 0 else "refuted"
 
-    # Find the most recently tested active hypothesis
-    active = [
-        (hid, h) for hid, h in ledger["hypotheses"].items()
-        if h.get("status") == "active"
-    ]
-    if not active:
-        return
+    # First: find hypothesis linked to this trade_id
+    hyp_id = None
+    hyp = None
+    for hid, h in ledger["hypotheses"].items():
+        if h.get("status") != "active":
+            continue
+        if trade_id in h.get("source_trade_ids", []):
+            hyp_id = hid
+            hyp = h
+            break
 
-    # Sort by last_tested descending
-    active.sort(key=lambda x: x[1].get("last_tested", ""), reverse=True)
-    hyp_id, hyp = active[0]
+    # Fallback: most recently tested active hypothesis
+    if hyp is None:
+        active = [
+            (hid, h) for hid, h in ledger["hypotheses"].items()
+            if h.get("status") == "active"
+        ]
+        if not active:
+            return
+        active.sort(key=lambda x: x[1].get("last_tested", ""), reverse=True)
+        hyp_id, hyp = active[0]
 
     if outcome == "confirmed":
         hyp["confirmations"] = hyp.get("confirmations", 0) + 1

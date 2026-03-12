@@ -114,6 +114,37 @@ def generate_dashboard_data(full: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"Prediction summary failed: {e}")
 
+    # v7: Learning system data
+    prediction_diagnosis = {}
+    try:
+        prediction_diagnosis = load_json(DATA_DIR / "prediction_diagnosis.json", default={})
+    except Exception as e:
+        logger.warning(f"Prediction diagnosis load failed: {e}")
+
+    hold_analysis = {}
+    try:
+        hold_analysis = load_json(DATA_DIR / "hold_analysis.json", default={})
+    except Exception as e:
+        logger.warning(f"Hold analysis load failed: {e}")
+
+    hypothesis_ledger = {}
+    try:
+        hypothesis_ledger = load_json(DATA_DIR / "hypothesis_ledger.json", default={})
+    except Exception as e:
+        logger.warning(f"Hypothesis ledger load failed: {e}")
+
+    active_constraints = {}
+    try:
+        active_constraints = load_json(DATA_DIR / "active_constraints.json", default={})
+    except Exception as e:
+        logger.warning(f"Active constraints load failed: {e}")
+
+    exploration_map = {}
+    try:
+        exploration_map = load_json(DATA_DIR / "exploration_map.json", default={})
+    except Exception as e:
+        logger.warning(f"Exploration map load failed: {e}")
+
     data = {
         "generated_at": iso_now(),
         "ticker": ticker,
@@ -131,6 +162,11 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "shadow_summary": shadow_summary,
         "thesis_history": thesis_history,
         "prediction_summary": prediction_summary,
+        "prediction_diagnosis": prediction_diagnosis,
+        "hold_analysis": hold_analysis,
+        "hypothesis_ledger": hypothesis_ledger,
+        "active_constraints": active_constraints,
+        "exploration_map": exploration_map,
         "market_intelligence": market_intelligence,
         "daily_briefing": daily_briefing,
         "performance_analytics": performance_analytics,

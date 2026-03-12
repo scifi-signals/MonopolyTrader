@@ -212,13 +212,6 @@ def run_cycle():
         except Exception as e:
             logger.warning(f"Prediction logging failed: {e}")
 
-        # 5c. Log hypothesis (v7 — every BUY/SELL with hypothesis)
-        try:
-            if action in ("BUY", "SELL"):
-                log_hypothesis(decision, cycle_tags)
-        except Exception as e:
-            logger.warning(f"Hypothesis logging failed: {e}")
-
         # 6. Execute
         if action in ("BUY", "SELL") and shares > 0:
             result = execute_trade(action, shares, current_price, decision)
@@ -261,6 +254,12 @@ def run_cycle():
                     expected_learning=decision.get("expected_learning", ""),
                     thesis_consistent=thesis_consistent,
                 )
+
+                # Log hypothesis with trade_id (v7)
+                try:
+                    log_hypothesis(decision, cycle_tags, trade_id=txn["id"])
+                except Exception as e:
+                    logger.warning(f"Hypothesis logging failed: {e}")
 
                 # If this was a SELL, close the corresponding BUY journal entry
                 if action == "SELL" and txn.get("realized_pnl") is not None:

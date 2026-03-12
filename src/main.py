@@ -34,6 +34,7 @@ from .tags import compute_tags
 from .analyst import run_nightly_update, run_pre_market
 from .shadow_journal import log_hold_decision, update_shadow_prices
 from .prediction_tracker import log_prediction, update_predictions
+from .hypothesis_ledger import log_hypothesis, resolve_hypothesis
 from .journal import (
     add_entry as journal_add_entry,
     close_entry as journal_close_entry,
@@ -182,6 +183,7 @@ def run_cycle():
             events=events,
             matched_patterns=matched_patterns,
             options_data=options_data,
+            current_tags=pre_decision_tags,
         )
 
         action = decision.get("action", "HOLD")
@@ -209,6 +211,13 @@ def run_cycle():
             )
         except Exception as e:
             logger.warning(f"Prediction logging failed: {e}")
+
+        # 5c. Log hypothesis (v7 — every BUY/SELL with hypothesis)
+        try:
+            if action in ("BUY", "SELL"):
+                log_hypothesis(decision, cycle_tags)
+        except Exception as e:
+            logger.warning(f"Hypothesis logging failed: {e}")
 
         # 6. Execute
         if action in ("BUY", "SELL") and shares > 0:
@@ -256,6 +265,12 @@ def run_cycle():
                 # If this was a SELL, close the corresponding BUY journal entry
                 if action == "SELL" and txn.get("realized_pnl") is not None:
                     _close_journal_for_sell(txn)
+
+                    # Resolve hypothesis on trade close (v7)
+                    try:
+                        resolve_hypothesis(txn["id"], txn["realized_pnl"])
+                    except Exception as e:
+                        logger.warning(f"Hypothesis resolution failed: {e}")
 
                     # Rebuild playbook immediately on trade close
                     try:
@@ -473,6 +488,42 @@ def run_daily_tasks():
         prune_predictions(days=30)
     except Exception as e:
         logger.debug(f"Prediction pruning failed: {e}")
+
+    # v7: Rebuild learning system modules (sequential — each depends on prior)
+    try:
+        from .hold_analyzer import rebuild_hold_analysis
+        rebuild_hold_analysis()
+        logger.info("Hold analysis rebuilt")
+    except Exception as e:
+        logger.warning(f"Hold analysis rebuild failed: {e}")
+
+    try:
+        from .prediction_diagnosis import rebuild_prediction_diagnosis
+        rebuild_prediction_diagnosis()
+        logger.info("Prediction diagnosis rebuilt")
+    except Exception as e:
+        logger.warning(f"Prediction diagnosis rebuild failed: {e}")
+
+    try:
+        from .hypothesis_ledger import rebuild_hypothesis_ledger
+        rebuild_hypothesis_ledger()
+        logger.info("Hypothesis ledger rebuilt")
+    except Exception as e:
+        logger.warning(f"Hypothesis ledger rebuild failed: {e}")
+
+    try:
+        from .constraint_generator import generate_constraints
+        generate_constraints()
+        logger.info("Constraints generated")
+    except Exception as e:
+        logger.warning(f"Constraint generation failed: {e}")
+
+    try:
+        from .pattern_explorer import rebuild_exploration_map
+        rebuild_exploration_map()
+        logger.info("Exploration map rebuilt")
+    except Exception as e:
+        logger.warning(f"Exploration map rebuild failed: {e}")
 
     # Run nightly analyst — update Market Intelligence Document
     try:

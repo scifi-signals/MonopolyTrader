@@ -2,6 +2,9 @@
 
 v6: Researcher identity. Trades are experiments, not bets. The playbook is the
 primary output, not P&L. HOLD is the default. Don't repeat failed experiments.
+
+v7: Learning system upgrade. Constraints, hypothesis tracking, prediction
+diagnosis, hold analysis, and active experiment design.
 """
 
 import json
@@ -50,6 +53,15 @@ Every trade has a real cost in slippage. The SPREAD COST section shows your roun
 ## SHADOW JOURNAL
 Your HOLD decisions are tracked. The system records what WOULD have happened if you'd traded during each HOLD. Use this data to calibrate: are you holding too much (missing profitable setups) or not enough (correctly avoiding losses)?
 
+## HARD CONSTRAINTS
+Your brief includes HARD CONSTRAINTS — empirically-derived rules from the playbook, prediction diagnosis, hold analysis, and retired hypotheses. These are NOT suggestions. If a constraint says NEVER TRADE, do not trade. If it says HOLD PREFERRED, you need an exceptionally strong reason to override it.
+
+## HYPOTHESIS TRACKING
+Every trade hypothesis is tracked through its lifecycle: proposed → active → retired. When you state a hypothesis, it gets logged. When the trade closes, it's marked confirmed or refuted. After 5+ tests with <30% confirmation, the hypothesis is retired — meaning the system has proven it wrong. Your brief shows retired hypotheses matching current conditions. Do NOT re-test retired hypotheses.
+
+## EXPLORATION
+Your brief may show EXPERIMENT OPPORTUNITIES — conditions frequently observed during HOLDs but never traded. These are ranked by shadow P&L signal and prediction accuracy. When conditions match, consider running the suggested micro-experiment with a small position.
+
 ## RESEARCH METRICS
 Your brief includes research efficiency metrics. Pay attention to:
 - Experiment efficiency: are you exploring NEW conditions or repeating old ones?
@@ -94,6 +106,7 @@ def build_market_brief(
     events: dict | None = None,
     matched_patterns: list[dict] | None = None,
     options_data: dict | None = None,
+    current_tags: dict | None = None,
 ) -> str:
     """Build the complete market brief for Claude.
 
@@ -277,6 +290,17 @@ def build_market_brief(
     except Exception:
         pass
 
+    # === Hard Constraints (v7) ===
+    try:
+        from .constraint_generator import format_constraints_for_brief
+        constraints_text = format_constraints_for_brief(current_tags)
+        if constraints_text:
+            parts.append("")
+            parts.append("=== HARD CONSTRAINTS ===")
+            parts.append(constraints_text)
+    except Exception:
+        pass
+
     # === Last Cycle (v6.1 Blindspot #11) ===
     try:
         last_cycle_text = _format_last_cycle(current.get("price", 0))
@@ -316,6 +340,21 @@ def build_market_brief(
     parts.append(f"Round-trip slippage: {round_trip_pct:.2f}% (${price * slippage_pct * 2:.2f} per share)")
     parts.append(f"Breakeven move: >{round_trip_pct:.2f}% (>${price * slippage_pct * 2:.2f}/share)")
     parts.append(f"Minimum target move (2x breakeven): >{round_trip_pct * 2:.2f}% (>${price * slippage_pct * 4:.2f}/share)")
+
+    # === Suggested Position Size (v7) ===
+    try:
+        if current_tags:
+            from .constraint_generator import compute_suggested_position_size
+            sizing = compute_suggested_position_size(current_tags, portfolio, price, config)
+            parts.append("")
+            parts.append("=== SUGGESTED POSITION SIZE ===")
+            parts.append(f"Tier: {sizing['tier'].upper()} — {sizing['reasoning']}")
+            if sizing['tier'] != 'blocked':
+                parts.append(f"Suggested: {sizing['shares']:.2f} shares (max: {sizing['max_shares']:.2f})")
+            else:
+                parts.append(">>> TRADING BLOCKED by active constraint <<<")
+    except Exception:
+        pass
 
     # === Trading Stats (self-awareness) ===
     try:
@@ -383,6 +422,17 @@ def build_market_brief(
         parts.append("=== PATTERN MATCHES (current conditions) ===")
         parts.append(format_matching_patterns_for_brief(matched_patterns))
 
+    # === Hold vs Trade Analysis (v7) ===
+    try:
+        from .hold_analyzer import format_hold_analysis_for_brief
+        hold_text = format_hold_analysis_for_brief(current_tags)
+        if hold_text:
+            parts.append("")
+            parts.append("=== HOLD vs TRADE ANALYSIS ===")
+            parts.append(hold_text)
+    except Exception:
+        pass
+
     # === Playbook (learning stats) ===
     parts.append("")
     parts.append("=== YOUR PLAYBOOK ===")
@@ -392,6 +442,17 @@ def build_market_brief(
         parts.append(format_playbook_for_brief(ledger))
     except Exception:
         parts.append("Playbook not yet available.")
+
+    # === Hypothesis Tracker (v7) ===
+    try:
+        from .hypothesis_ledger import format_hypothesis_ledger_for_brief
+        hyp_text = format_hypothesis_ledger_for_brief(current_tags)
+        if hyp_text:
+            parts.append("")
+            parts.append("=== HYPOTHESIS TRACKER ===")
+            parts.append(hyp_text)
+    except Exception:
+        pass
 
     # === Shadow Journal (HOLD tracking) ===
     try:
@@ -404,14 +465,33 @@ def build_market_brief(
     except Exception:
         pass
 
-    # === Prediction Scorecard ===
+    # === Prediction Diagnosis (v7, replaces scorecard) ===
     try:
-        from .prediction_tracker import format_prediction_scorecard
-        scorecard = format_prediction_scorecard(hours=72)
-        if scorecard:
+        from .prediction_diagnosis import format_prediction_diagnosis_for_brief
+        diag_text = format_prediction_diagnosis_for_brief()
+        if diag_text:
             parts.append("")
-            parts.append("=== YOUR PREDICTION SCORECARD (last 3 days) ===")
-            parts.append(scorecard)
+            parts.append("=== YOUR PREDICTION DIAGNOSIS ===")
+            parts.append(diag_text)
+        else:
+            # Fall back to scorecard if diagnosis not yet built
+            from .prediction_tracker import format_prediction_scorecard
+            scorecard = format_prediction_scorecard(hours=72)
+            if scorecard:
+                parts.append("")
+                parts.append("=== YOUR PREDICTION SCORECARD (last 3 days) ===")
+                parts.append(scorecard)
+    except Exception:
+        pass
+
+    # === Exploration Opportunity (v7) ===
+    try:
+        from .pattern_explorer import format_explorer_for_brief
+        explore_text = format_explorer_for_brief(current_tags)
+        if explore_text:
+            parts.append("")
+            parts.append("=== EXPLORATION OPPORTUNITY ===")
+            parts.append(explore_text)
     except Exception:
         pass
 
@@ -569,16 +649,18 @@ def make_decision(
     events: dict | None = None,
     matched_patterns: list[dict] | None = None,
     options_data: dict | None = None,
+    current_tags: dict | None = None,
 ) -> dict:
     """Call Claude to make a research decision.
 
     v6: Researcher identity. System prompt includes Market Intelligence Document.
     User prompt includes daily briefing + enhanced market data + shadow journal.
+    v7: current_tags enables constraint checking and exploration suggestions.
     """
     brief = build_market_brief(
         market_data, world, portfolio, news_feed,
         web_results, journal_entries, config, events,
-        matched_patterns, options_data,
+        matched_patterns, options_data, current_tags,
     )
 
     # Build system prompt with Market Intelligence Document

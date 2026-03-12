@@ -28,7 +28,7 @@
     ]
   },
   "world_tickers": {
-    "macro": ["^TNX", "CL=F", "BTC-USD", "^IXIC", "DX-Y.NYB", "SPY", "^VIX"],
+    "macro": ["^TNX", "CL=F", "BTC-USD", "^IXIC", "DX-Y.NYB", "SPY", "^VIX", "QQQ", "XLK"],
     "ev_peers": ["RIVN", "LCID", "NIO", "LI", "XPEV"]
   },
   "journal": {

@@ -109,6 +109,9 @@ def compute_tags(
     # Intraday regime (Blindspot #5)
     intraday_regime_tag = _compute_intraday_regime(regime)
 
+    # Regime age (v7) — how long the current regime has been active
+    regime_age_tag = _compute_regime_age()
+
     return {
         "rsi_zone": (
             "oversold" if rsi < 30
@@ -143,6 +146,7 @@ def compute_tags(
         "news_catalyst": catalyst_tag,
         "options_sentiment": options_tag,
         "intraday_regime": intraday_regime_tag,
+        "regime_age": regime_age_tag,
     }
 
 
@@ -160,12 +164,12 @@ def _compute_time_of_day() -> str:
         # 10:30 - 14:00 ET
         elif total_minutes < 840:  # before 14:00
             return "midday"
-        # 14:00 - 15:30 ET
-        elif total_minutes < 930:  # before 15:30
+        # 14:00 - 15:00 ET
+        elif total_minutes < 900:  # before 15:00
             return "afternoon"
-        # 15:30 - 16:00 ET
+        # 15:00 - 16:00 ET (power hour — highest volume, most volatile)
         else:
-            return "close"
+            return "power_hour"
     except Exception:
         return "unknown"
 
@@ -205,6 +209,42 @@ def _compute_options_sentiment(options_data: dict | None) -> str:
         return "call_heavy"
     else:
         return "balanced"
+
+
+def _compute_regime_age() -> str:
+    """Classify how long the current MID thesis has been active.
+
+    Uses mid_history.json to find when the current direction was established.
+    new=0-2 days, established=3-7 days, mature=8+ days.
+    """
+    try:
+        from .utils import load_json, DATA_DIR
+        from datetime import timezone
+
+        mid = load_json(DATA_DIR / "market_intelligence.json", default={})
+        thesis = mid.get("thesis", {})
+        established = thesis.get("established")
+
+        if not established:
+            return "unknown"
+
+        try:
+            est_date = datetime.strptime(established, "%Y-%m-%d")
+        except ValueError:
+            # Try ISO format
+            est_date = datetime.fromisoformat(established).replace(tzinfo=None)
+
+        now = datetime.now()
+        days = (now - est_date).days
+
+        if days <= 2:
+            return "new"
+        elif days <= 7:
+            return "established"
+        else:
+            return "mature"
+    except Exception:
+        return "unknown"
 
 
 def _compute_intraday_regime(regime: dict) -> str:

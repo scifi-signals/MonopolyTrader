@@ -403,6 +403,46 @@ def run_nightly_update():
     except Exception:
         news_text = "News unavailable."
 
+    # v7: Hold analysis summary
+    hold_analysis_text = "Hold analysis not available."
+    try:
+        from .hold_analyzer import format_hold_analysis_for_brief
+        ha_result = format_hold_analysis_for_brief()
+        if ha_result:
+            hold_analysis_text = ha_result
+    except Exception as e:
+        logger.debug(f"Hold analysis unavailable: {e}")
+
+    # v7: Prediction diagnosis
+    pred_diagnosis_text = "Prediction diagnosis not available."
+    try:
+        from .prediction_diagnosis import format_prediction_diagnosis_for_brief
+        pd_result = format_prediction_diagnosis_for_brief()
+        if pd_result:
+            pred_diagnosis_text = pd_result
+    except Exception as e:
+        logger.debug(f"Prediction diagnosis unavailable: {e}")
+
+    # v7: Hypothesis ledger summary
+    hypothesis_text = "Hypothesis tracking not available."
+    try:
+        from .hypothesis_ledger import format_hypothesis_ledger_for_brief
+        hl_result = format_hypothesis_ledger_for_brief()
+        if hl_result:
+            hypothesis_text = hl_result
+    except Exception as e:
+        logger.debug(f"Hypothesis ledger unavailable: {e}")
+
+    # v7: Exploration map
+    exploration_text = "Exploration map not available."
+    try:
+        from .pattern_explorer import format_explorer_for_brief
+        ex_result = format_explorer_for_brief()
+        if ex_result:
+            exploration_text = ex_result
+    except Exception as e:
+        logger.debug(f"Exploration map unavailable: {e}")
+
     # Build the user prompt
     user_prompt = f"""=== CURRENT MARKET INTELLIGENCE DOCUMENT ===
 {json.dumps(current_mid, indent=2)}
@@ -416,11 +456,23 @@ def run_nightly_update():
 === SHADOW JOURNAL (HOLD decisions) ===
 {shadow_text}
 
+=== HOLD vs TRADE ANALYSIS ===
+{hold_analysis_text}
+
 === RESEARCH METRICS ===
 {metrics_text}
 
 === PREDICTION ACCURACY ===
 {prediction_text}
+
+=== PREDICTION DIAGNOSIS ===
+{pred_diagnosis_text}
+
+=== HYPOTHESIS TRACKER ===
+{hypothesis_text}
+
+=== EXPLORATION MAP ===
+{exploration_text}
 
 === THESIS HISTORY ===
 {thesis_history_text}
@@ -432,7 +484,7 @@ def run_nightly_update():
 === NEWS ===
 {news_text}
 
-Update the Market Intelligence Document based on all of the above. Include experiment_priorities for tomorrow. Return ONLY valid JSON."""
+Update the Market Intelligence Document based on all of the above. Include experiment_priorities for tomorrow — use the exploration map to suggest specific conditions to test. Return ONLY valid JSON."""
 
     try:
         raw, model_used = call_ai_with_fallback(
@@ -525,6 +577,30 @@ def run_pre_market():
     except Exception:
         news_text = "News unavailable."
 
+    # v7: Cross-day learning summary
+    cross_day_text = ""
+    try:
+        from .prediction_tracker import get_prediction_summary
+        from .shadow_journal import get_shadow_summary
+        pred_24h = get_prediction_summary(hours=24)
+        shadow_24h = get_shadow_summary(hours=24)
+        lines = []
+        if pred_24h.get("resolved", 0) > 0:
+            lines.append(
+                f"Yesterday predictions: {pred_24h['resolved']} resolved, "
+                f"{pred_24h['direction_accuracy']:.0%} direction accuracy"
+            )
+        if shadow_24h.get("total_holds", 0) > 0:
+            lines.append(
+                f"Yesterday HOLDs: {shadow_24h['total_holds']} total, "
+                f"{shadow_24h.get('unprofitable_buys', 0)} avoided losses, "
+                f"{shadow_24h.get('profitable_buys', 0)} missed gains"
+            )
+        if lines:
+            cross_day_text = "\n".join(lines)
+    except Exception:
+        pass
+
     user_prompt = f"""=== MARKET INTELLIGENCE DOCUMENT ===
 {json.dumps(mid, indent=2)}
 
@@ -533,6 +609,9 @@ def run_pre_market():
 
 === OVERNIGHT NEWS ===
 {news_text}
+
+=== YESTERDAY'S LEARNING ===
+{cross_day_text if cross_day_text else "No cross-day data available."}
 
 Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 

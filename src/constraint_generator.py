@@ -129,7 +129,7 @@ def generate_constraints() -> dict:
             "pattern": condition,
             "reason": (
                 f"Hold avoids {hold_wr:.0%} of losses vs "
-                f"trade wins {trade_wr:.0%} ({meaningful} observations)"
+                f"trade wins {(trade_wr or 0):.0%} ({meaningful} observations)"
             ),
             "hold_win_rate": hold_wr,
             "trade_win_rate": trade_wr,

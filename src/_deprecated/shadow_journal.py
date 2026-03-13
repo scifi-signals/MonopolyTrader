@@ -20,7 +20,8 @@ HOLD_JOURNAL_PATH = DATA_DIR / "hold_journal.json"
 SHADOW_TRADE_SHARES = 0.5
 
 # How far back to track shadow prices (hours)
-SHADOW_LOOKBACK_HOURS = 4
+# Must cover a full trading day (6.5h) plus buffer for late-afternoon HOLDs
+SHADOW_LOOKBACK_HOURS = 8
 
 # Threshold for "meaningful" price move
 MEANINGFUL_MOVE_PCT = 0.2
@@ -161,9 +162,17 @@ def update_shadow_prices(current_price: float) -> int:
 
 
 def _resolve_entry(entry: dict, final_price: float):
-    """Mark a shadow entry as resolved with final P&L."""
+    """Mark a shadow entry as resolved with final P&L.
+
+    Uses final_price for P&L computation — this represents the actual outcome.
+    Peak/trough are stored as metadata but NOT used for the P&L that drives
+    hold quality classification, to avoid systematically inflating both
+    buy and sell P&L simultaneously.
+    """
     entry_price = entry.get("price", 0)
     if entry_price > 0:
+        shadow_updates = entry.get("shadow_updates", [])
+
         entry["shadow_final_price"] = final_price
         entry["shadow_pnl_buy"] = round(
             (final_price - entry_price) * SHADOW_TRADE_SHARES, 2
@@ -171,6 +180,20 @@ def _resolve_entry(entry: dict, final_price: float):
         entry["shadow_pnl_sell"] = round(
             (entry_price - final_price) * SHADOW_TRADE_SHARES, 2
         )
+
+        # Log when resolved with near-zero P&L
+        if (abs(entry["shadow_pnl_buy"]) < 0.01 and
+                abs(entry["shadow_pnl_sell"]) < 0.01):
+            if shadow_updates:
+                logger.debug(
+                    f"Shadow entry resolved with ~$0 P&L despite {len(shadow_updates)} "
+                    f"updates (entry=${entry_price:.2f}, final=${final_price:.2f})"
+                )
+            else:
+                logger.debug(
+                    f"Shadow entry resolved with $0 P&L and 0 updates "
+                    f"(entry=${entry_price:.2f} — likely aged out during off-hours)"
+                )
     entry["shadow_resolved"] = True
 
 

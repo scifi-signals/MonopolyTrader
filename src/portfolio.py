@@ -279,6 +279,28 @@ def get_portfolio_summary() -> dict:
     }
 
 
+def execute_stop_exit(ticker: str, price: float, reason: str) -> dict:
+    """Execute a code-triggered stop exit. Sells all shares at current price.
+
+    Called by risk manager (trailing stop, time stop), not by AI.
+    """
+    portfolio = load_portfolio()
+    holdings = portfolio.get("holdings", {}).get(ticker, {})
+    shares = holdings.get("shares", 0)
+
+    if shares <= 0:
+        logger.info(f"Stop exit skipped — no {ticker} shares to sell")
+        return {"status": "rejected", "reason": "no shares to sell"}
+
+    logger.warning(f"STOP EXIT: selling {shares:.4f} {ticker} @ ${price:.2f} — {reason}")
+    return execute_trade(
+        action="SELL",
+        shares=shares,
+        price=price,
+        decision={"reasoning": reason, "confidence": 0, "strategy": "stop_exit"},
+    )
+
+
 def save_snapshot():
     """Save current portfolio state to daily snapshot."""
     portfolio = load_portfolio()

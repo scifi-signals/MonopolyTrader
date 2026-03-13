@@ -39,6 +39,7 @@ TAG_SPACE = {
     "options_sentiment": ["call_heavy", "balanced", "put_heavy", "unavailable"],
     "intraday_regime": ["trending", "range_bound", "unavailable"],
     "regime_age": ["new", "established", "mature", "unknown"],
+    "hold_duration": ["quick", "medium", "extended", "overnight"],
 }
 
 # Minimum observations before we consider a condition "explored"

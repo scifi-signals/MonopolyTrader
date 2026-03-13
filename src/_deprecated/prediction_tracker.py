@@ -85,13 +85,13 @@ def _score_prediction(predicted: dict, actual_change_pct: float) -> dict:
         score += DIRECTION_WEIGHT
         if magnitude_correct:
             score += MAGNITUDE_WEIGHT + BONUS_WEIGHT
-    # Partial credit: right direction, adjacent magnitude
-    elif direction_correct and not magnitude_correct:
-        mag_order = ["flat", "small", "moderate", "large"]
-        if pred_mag in mag_order and actual_mag in mag_order:
-            diff = abs(mag_order.index(pred_mag) - mag_order.index(actual_mag))
-            if diff == 1:
-                score += MAGNITUDE_WEIGHT * 0.5  # Partial magnitude credit
+        else:
+            # Partial credit: right direction, adjacent magnitude
+            mag_order = ["flat", "small", "moderate", "large"]
+            if pred_mag in mag_order and actual_mag in mag_order:
+                diff = abs(mag_order.index(pred_mag) - mag_order.index(actual_mag))
+                if diff == 1:
+                    score += MAGNITUDE_WEIGHT * 0.5  # Partial magnitude credit
 
     return {
         "actual_change_pct": round(actual_change_pct, 3),

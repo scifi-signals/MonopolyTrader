@@ -1,6 +1,8 @@
 """Dashboard reporter — generates JSON data for the dashboard.
 
-v6: Added research metrics, shadow journal summary, thesis history to dashboard data.
+v8: Replaced v7 learning modules with signal_registry, cycle_outcomes,
+daily_pnl, active_position. Core dashboard data (portfolio, snapshots,
+transactions, benchmark) unchanged.
 """
 
 import math
@@ -17,7 +19,6 @@ from .portfolio import (
     SNAPSHOTS_DIR
 )
 from .journal import load_journal, get_journal_stats
-from .thesis_builder import get_learning_metrics, compute_research_metrics
 
 logger = setup_logging("reporter")
 
@@ -61,89 +62,52 @@ def generate_dashboard_data(full: bool = False) -> dict:
     journal_entries = load_journal()
     journal_stats = get_journal_stats()
 
-    # Latest decision cycle for Agent's Mind card
+    # Latest decision cycle
     latest_cycle = load_json(DATA_DIR / "latest_cycle.json", default=None)
-
-    # Market Intelligence Document
-    market_intelligence = load_json(DATA_DIR / "market_intelligence.json", default={})
-
-    # Daily briefing
-    daily_briefing = load_json(DATA_DIR / "daily_briefing.json", default={})
 
     # Performance analytics
     performance_analytics = _build_performance_analytics(snapshots)
 
-    # Thesis ledger / playbook
-    thesis_ledger = load_json(DATA_DIR / "thesis_ledger.json", default={})
-    learning_metrics = {}
+    # v8: Signal registry
+    signal_registry = {}
     try:
-        if thesis_ledger:
-            learning_metrics = get_learning_metrics(thesis_ledger)
+        signal_registry = load_json(DATA_DIR / "signal_registry.json", default={})
     except Exception as e:
-        logger.warning(f"Learning metrics failed: {e}")
+        logger.warning(f"Signal registry load failed: {e}")
 
-    # Research metrics (v6)
-    research_metrics = {}
+    # v8: Cycle outcomes summary (not full data — just counts)
+    outcomes_summary = {}
     try:
-        if thesis_ledger:
-            research_metrics = compute_research_metrics(thesis_ledger)
+        outcomes = load_json(DATA_DIR / "cycle_outcomes.json", default=[])
+        resolved = [o for o in outcomes if o.get("resolved")]
+        outcomes_summary = {
+            "total": len(outcomes),
+            "resolved": len(resolved),
+            "unresolved": len(outcomes) - len(resolved),
+        }
     except Exception as e:
-        logger.warning(f"Research metrics failed: {e}")
+        logger.warning(f"Outcomes summary failed: {e}")
 
-    # Shadow journal summary (v6)
-    shadow_summary = {}
+    # v8: Daily P&L
+    daily_pnl = {}
     try:
-        from .shadow_journal import get_shadow_summary
-        shadow_summary = get_shadow_summary(hours=24)
+        daily_pnl = load_json(DATA_DIR / "daily_pnl.json", default={})
     except Exception as e:
-        logger.warning(f"Shadow journal summary failed: {e}")
+        logger.warning(f"Daily P&L load failed: {e}")
 
-    # Thesis history summary (v6)
-    thesis_history = ""
+    # v8: Active position
+    active_position = {}
     try:
-        from .analyst import get_thesis_history_summary
-        thesis_history = get_thesis_history_summary()
+        active_position = load_json(DATA_DIR / "active_position.json", default={})
     except Exception as e:
-        logger.warning(f"Thesis history failed: {e}")
+        logger.warning(f"Active position load failed: {e}")
 
-    # Prediction accuracy (v6.1)
-    prediction_summary = {}
+    # v8: Daily narrative
+    daily_narrative = {}
     try:
-        from .prediction_tracker import get_prediction_summary
-        prediction_summary = get_prediction_summary(hours=72)
+        daily_narrative = load_json(DATA_DIR / "daily_narrative.json", default={})
     except Exception as e:
-        logger.warning(f"Prediction summary failed: {e}")
-
-    # v7: Learning system data
-    prediction_diagnosis = {}
-    try:
-        prediction_diagnosis = load_json(DATA_DIR / "prediction_diagnosis.json", default={})
-    except Exception as e:
-        logger.warning(f"Prediction diagnosis load failed: {e}")
-
-    hold_analysis = {}
-    try:
-        hold_analysis = load_json(DATA_DIR / "hold_analysis.json", default={})
-    except Exception as e:
-        logger.warning(f"Hold analysis load failed: {e}")
-
-    hypothesis_ledger = {}
-    try:
-        hypothesis_ledger = load_json(DATA_DIR / "hypothesis_ledger.json", default={})
-    except Exception as e:
-        logger.warning(f"Hypothesis ledger load failed: {e}")
-
-    active_constraints = {}
-    try:
-        active_constraints = load_json(DATA_DIR / "active_constraints.json", default={})
-    except Exception as e:
-        logger.warning(f"Active constraints load failed: {e}")
-
-    exploration_map = {}
-    try:
-        exploration_map = load_json(DATA_DIR / "exploration_map.json", default={})
-    except Exception as e:
-        logger.warning(f"Exploration map load failed: {e}")
+        logger.warning(f"Daily narrative load failed: {e}")
 
     data = {
         "generated_at": iso_now(),
@@ -156,25 +120,20 @@ def generate_dashboard_data(full: bool = False) -> dict:
         "benchmark": benchmark,
         "trade_journal": journal_entries,
         "journal_stats": journal_stats,
-        "thesis_ledger": thesis_ledger,
-        "learning_metrics": learning_metrics,
-        "research_metrics": research_metrics,
-        "shadow_summary": shadow_summary,
-        "thesis_history": thesis_history,
-        "prediction_summary": prediction_summary,
-        "prediction_diagnosis": prediction_diagnosis,
-        "hold_analysis": hold_analysis,
-        "hypothesis_ledger": hypothesis_ledger,
-        "active_constraints": active_constraints,
-        "exploration_map": exploration_map,
-        "market_intelligence": market_intelligence,
-        "daily_briefing": daily_briefing,
         "performance_analytics": performance_analytics,
+        # v8 data
+        "signal_registry": signal_registry,
+        "outcomes_summary": outcomes_summary,
+        "daily_pnl": daily_pnl,
+        "active_position": active_position,
+        "daily_narrative": daily_narrative,
+        # Status
         "market_open": is_market_open(),
         "time_et": now_et().strftime("%Y-%m-%d %H:%M ET"),
         "config": {
             "starting_balance": config["starting_balance"],
             "risk_params": config["risk_params"],
+            "v8_risk": config.get("v8_risk", {}),
         },
     }
 

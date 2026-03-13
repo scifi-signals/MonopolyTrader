@@ -169,17 +169,19 @@ def log_hypothesis(decision: dict, tags: dict, trade_id: str = None):
 def resolve_hypothesis(trade_id: str, pnl: float):
     """Resolve a hypothesis when a trade closes.
 
-    First tries to find the hypothesis linked to this trade_id.
-    Falls back to the most recently tested active hypothesis.
+    Finds the hypothesis linked to this trade_id. If not found, logs a
+    warning and returns WITHOUT modifying any hypothesis — the old fallback
+    of resolving the "most recent active hypothesis" was corrupting data
+    by confirming/refuting unrelated hypotheses.
 
     Args:
-        trade_id: The trade ID that closed
+        trade_id: The BUY trade ID that opened this experiment
         pnl: The realized P&L
     """
     ledger = _load_ledger()
     outcome = "confirmed" if pnl >= 0 else "refuted"
 
-    # First: find hypothesis linked to this trade_id
+    # Find hypothesis linked to this trade_id
     hyp_id = None
     hyp = None
     for hid, h in ledger["hypotheses"].items():
@@ -190,16 +192,12 @@ def resolve_hypothesis(trade_id: str, pnl: float):
             hyp = h
             break
 
-    # Fallback: most recently tested active hypothesis
     if hyp is None:
-        active = [
-            (hid, h) for hid, h in ledger["hypotheses"].items()
-            if h.get("status") == "active"
-        ]
-        if not active:
-            return
-        active.sort(key=lambda x: x[1].get("last_tested", ""), reverse=True)
-        hyp_id, hyp = active[0]
+        logger.warning(
+            f"No hypothesis found for trade_id={trade_id} — "
+            f"skipping resolution (P&L=${pnl:+.2f})"
+        )
+        return
 
     if outcome == "confirmed":
         hyp["confirmations"] = hyp.get("confirmations", 0) + 1
@@ -210,12 +208,6 @@ def resolve_hypothesis(trade_id: str, pnl: float):
     hyp["confirmation_rate"] = round(
         hyp.get("confirmations", 0) / total_tests, 3
     ) if total_tests > 0 else 0
-
-    # Track trade IDs
-    source_ids = hyp.get("source_trade_ids", [])
-    if trade_id not in source_ids:
-        source_ids.append(trade_id)
-        hyp["source_trade_ids"] = source_ids[-10:]  # Keep last 10
 
     _save_ledger(ledger)
     logger.info(

@@ -30,15 +30,33 @@ def load_config() -> dict:
 
 def load_json(path: Path, default=None):
     if path.exists():
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger = logging.getLogger("utils")
+            logger.error(f"Corrupt JSON in {path}: {e} — returning default")
+            return default if default is not None else {}
     return default if default is not None else {}
 
 
 def save_json(path: Path, data, indent=2):
+    """Atomic JSON save — writes to temp file then renames to prevent corruption."""
+    import tempfile
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=indent, default=str)
+    # Write to temp file in same directory, then atomic rename
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=indent, default=str)
+        os.replace(tmp_path, path)
+    except Exception:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def now_utc() -> datetime:

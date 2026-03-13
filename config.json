@@ -39,5 +39,19 @@
     "yfinance": true,
     "rss": true,
     "brave_search": true
+  },
+  "v8_risk": {
+    "trailing_stop_default_pct": 0.015,
+    "trailing_stop_min_pct": 0.005,
+    "trailing_stop_max_pct": 0.03,
+    "time_stop_minutes": 240,
+    "daily_loss_limit": 50.0,
+    "min_edge_threshold": 0.001,
+    "adaptive_cycle": {
+      "normal_interval_minutes": 15,
+      "high_vol_interval_minutes": 5,
+      "high_vol_vix_threshold": 30,
+      "high_vol_range_threshold_pct": 2.0
+    }
   }
 }

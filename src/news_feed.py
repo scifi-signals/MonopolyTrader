@@ -54,6 +54,15 @@ CATALYST_KEYWORDS = {
         "rivian", "lucid", "nio", "byd", "ford ev", "gm ev", "volkswagen ev",
         "hyundai ev", "competition", "market share", "ev market",
     ],
+    "geopolitical": [
+        "war", "conflict", "sanctions", "iran", "china", "russia", "ukraine",
+        "taiwan", "military", "geopolitical", "nato", "missile", "attack",
+        "ceasefire", "peace", "troops", "nuclear",
+    ],
+    "energy": [
+        "oil price", "opec", "crude", "natural gas", "energy crisis",
+        "energy policy", "renewable", "solar", "wind power",
+    ],
 }
 
 # Tesla-specific relevance keywords
@@ -156,13 +165,15 @@ def _classify_catalyst(text: str) -> str:
     return max(scores, key=scores.get)
 
 
-def _score_relevance(title: str, summary: str = "") -> float:
+def _score_relevance(title: str, summary: str = "", source: str = "") -> float:
     """Score relevance of a news item to TSLA trading decisions.
 
     Tesla in title = 0.8+, general market = 0.3, Tesla in summary = 0.5.
+    Google News macro sources start at 0.25 unless Tesla/EV is mentioned.
     """
     text = f"{title} {summary}".lower()
     title_lower = title.lower()
+    is_google_macro = "Google News" in source and "TSLA" not in source
 
     # Direct Tesla mention in title = high relevance
     if any(kw in title_lower for kw in ["tesla", "tsla"]):
@@ -177,14 +188,20 @@ def _score_relevance(title: str, summary: str = "") -> float:
     # EV market / competition news
     elif any(kw in text for kw in ["ev market", "electric vehicle", "ev sales"]):
         base = 0.40
+    # Geopolitical / macro with market impact keywords
+    elif any(kw in text for kw in ["tariff", "trade war", "sanctions", "war ", "conflict"]):
+        base = 0.35
     # General macro/market news
     elif any(kw in text for kw in ["fed ", "interest rate", "nasdaq", "s&p"]):
         base = 0.30
+    # Google News macro sources get lower default
+    elif is_google_macro:
+        base = 0.25
     else:
         base = 0.15
 
     # Boost for high-impact catalyst keywords in title
-    for catalyst_type in ["earnings", "delivery", "regulatory"]:
+    for catalyst_type in ["earnings", "delivery", "regulatory", "geopolitical"]:
         if any(kw in title_lower for kw in CATALYST_KEYWORDS.get(catalyst_type, [])):
             base = min(base + 0.10, 1.0)
             break
@@ -304,6 +321,71 @@ def _fetch_rss_feeds() -> list[NewsItem]:
     return items
 
 
+def _fetch_google_news_rss() -> list[NewsItem]:
+    """Fetch macro/geopolitical news from Google News RSS.
+
+    v8: Broader market awareness — tariffs, oil, Fed, geopolitics.
+    Lower base relevance (0.25) unless Tesla/EV is mentioned.
+    """
+    items = []
+
+    feeds = {
+        "Stock Market": "https://news.google.com/rss/search?q=stock+market+today&hl=en-US&gl=US&ceid=US:en",
+        "TSLA Google": "https://news.google.com/rss/search?q=TSLA+Tesla+stock&hl=en-US&gl=US&ceid=US:en",
+        "Federal Reserve": "https://news.google.com/rss/search?q=federal+reserve+interest+rate&hl=en-US&gl=US&ceid=US:en",
+        "Trade War": "https://news.google.com/rss/search?q=tariff+trade+war+China&hl=en-US&gl=US&ceid=US:en",
+        "Oil Markets": "https://news.google.com/rss/search?q=oil+price+OPEC+crude&hl=en-US&gl=US&ceid=US:en",
+        "Geopolitical": "https://news.google.com/rss/search?q=geopolitical+conflict+sanctions&hl=en-US&gl=US&ceid=US:en",
+    }
+
+    try:
+        import feedparser
+    except ImportError:
+        logger.info("feedparser not installed — Google News RSS disabled")
+        return items
+
+    for source_name, feed_url in feeds.items():
+        try:
+            feed = feedparser.parse(feed_url)
+            if feed.bozo and not feed.entries:
+                continue
+
+            for entry in feed.entries[:8]:  # Cap per feed
+                title = entry.get("title", "")
+                if not title:
+                    continue
+
+                pub_date = ""
+                if hasattr(entry, "published_parsed") and entry.published_parsed:
+                    try:
+                        pub_date = datetime(
+                            *entry.published_parsed[:6],
+                            tzinfo=timezone.utc,
+                        ).isoformat()
+                    except Exception:
+                        pub_date = entry.get("published", "")
+                elif hasattr(entry, "published"):
+                    pub_date = entry.published
+
+                summary = entry.get("summary", "")
+                summary = re.sub(r'<[^>]+>', '', summary)[:300]
+
+                news_item = NewsItem(
+                    title=title,
+                    source=f"Google News ({source_name})",
+                    published=pub_date,
+                    url=entry.get("link", ""),
+                    summary=summary,
+                )
+                items.append(news_item)
+
+        except Exception as e:
+            logger.warning(f"Google News RSS {source_name} failed: {e}")
+            continue
+
+    return items
+
+
 def _deduplicate(items: list[NewsItem]) -> list[NewsItem]:
     """Remove duplicate headlines using word overlap similarity."""
     if not items:
@@ -404,11 +486,16 @@ def fetch_news_feed(ticker: str = "TSLA") -> NewsFeed:
     source_counts["rss"] = len(rss_items)
     all_items.extend(rss_items)
 
+    # Source 3: Google News RSS (macro/geopolitical)
+    google_items = _fetch_google_news_rss()
+    source_counts["google_news"] = len(google_items)
+    all_items.extend(google_items)
+
     # Classify and score each item
     for item in all_items:
         text = f"{item.title} {item.summary}"
         item.catalyst_type = _classify_catalyst(text)
-        item.relevance = _score_relevance(item.title, item.summary)
+        item.relevance = _score_relevance(item.title, item.summary, item.source)
         item._hash = _headline_hash(item.title)
 
     # Within-cycle deduplicate

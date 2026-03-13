@@ -7,6 +7,11 @@ Constraints are not suggestions — they're empirically-derived rules that
 prevent the researcher from repeating known-bad experiments.
 
 Also computes advisory position sizing based on condition confidence.
+
+v7.1: Fixed constraint death spiral — single-tag patterns (e.g. rsi_zone=neutral)
+that appear in most trades have no discriminative power and must NOT generate
+NEVER_TRADE constraints. Only multi-tag patterns (2+ tags) can be NEVER_TRADE.
+Single-tag poor performers become WEAK_PATTERN advisories instead.
 """
 
 from .utils import load_json, save_json, iso_now, setup_logging, DATA_DIR
@@ -19,9 +24,16 @@ DIAGNOSIS_PATH = DATA_DIR / "prediction_diagnosis.json"
 HOLD_ANALYSIS_PATH = DATA_DIR / "hold_analysis.json"
 HYPOTHESIS_PATH = DATA_DIR / "hypothesis_ledger.json"
 
-# Thresholds
+# Thresholds — NEVER_TRADE only for multi-tag patterns with discriminative power
 NEVER_TRADE_WIN_RATE = 0.25
 NEVER_TRADE_MIN_N = 5
+# A multi-tag pattern must cover LESS than this fraction of total trades
+# to have discriminative power. If a pattern covers 80%+ of all trades,
+# it's just "all trades are bad" repackaged — not a specific avoidable condition.
+NEVER_TRADE_MAX_COVERAGE = 0.50
+# Single-tag patterns become WEAK_PATTERN advisory (higher bar)
+WEAK_PATTERN_WIN_RATE = 0.25
+WEAK_PATTERN_MIN_N = 8
 LOW_CONFIDENCE_ACCURACY = 0.40
 LOW_CONFIDENCE_MIN_N = 10
 HOLD_PREFERRED_EDGE = 0.20
@@ -49,24 +61,70 @@ def generate_constraints() -> dict:
     """
     constraints = []
 
-    # === Source 1: Playbook NEVER_TRADE ===
+    # === Source 1: Playbook patterns ===
+    # Multi-tag patterns (2+ tags) can generate NEVER_TRADE — they're specific enough.
+    # Single-tag patterns CANNOT generate NEVER_TRADE because tags like rsi_zone=neutral
+    # appear in 70-90% of market hours and have no discriminative power. A single tag
+    # with poor win rate means "all trades lost" not "this tag causes losses."
+    # Single-tag poor performers become WEAK_PATTERN advisory instead.
     ledger = load_json(LEDGER_PATH, default={})
     theses = ledger.get("theses", {})
     multi = ledger.get("multi_tag_patterns", {})
 
-    for key, stats in {**theses, **multi}.items():
+    # Multi-tag patterns → NEVER_TRADE if they have discriminative power
+    # Discriminative power = the pattern covers a MINORITY of total trades.
+    # When all trades cluster in one tag region, every 2-tag/3-tag combo
+    # covers the same trades and has the same bad win rate — that's not a
+    # specific avoidable condition, it's just "all trading has been bad."
+    total_trades = ledger.get("active_trades", 0)
+    for key, stats in multi.items():
         n = stats.get("trades", 0)
         wr = stats.get("win_rate", 1.0)
         if n >= NEVER_TRADE_MIN_N and wr < NEVER_TRADE_WIN_RATE:
-            # Normalize key format (playbook uses ":" for single, "=" for multi)
+            # Check discriminative power: pattern must cover < 50% of total trades
+            coverage = n / total_trades if total_trades > 0 else 1.0
+            pattern_key = key.replace(":", "=")
+            if coverage <= NEVER_TRADE_MAX_COVERAGE:
+                constraints.append({
+                    "type": "NEVER_TRADE",
+                    "source": "playbook",
+                    "pattern": pattern_key,
+                    "reason": (
+                        f"{stats.get('wins', 0)}/{n} wins ({wr:.0%}) — "
+                        f"avg P&L ${stats.get('avg_pnl', 0):+.2f}"
+                    ),
+                    "trades": n,
+                    "win_rate": wr,
+                })
+            else:
+                # Low discriminative power — demote to WEAK_PATTERN
+                constraints.append({
+                    "type": "WEAK_PATTERN",
+                    "source": "playbook",
+                    "pattern": pattern_key,
+                    "reason": (
+                        f"{stats.get('wins', 0)}/{n} wins ({wr:.0%}) — "
+                        f"avg P&L ${stats.get('avg_pnl', 0):+.2f}. "
+                        f"Advisory: covers {coverage:.0%} of all trades — may lack discriminative power."
+                    ),
+                    "trades": n,
+                    "win_rate": wr,
+                })
+
+    # Single-tag patterns → WEAK_PATTERN advisory (not blocking)
+    for key, stats in theses.items():
+        n = stats.get("trades", 0)
+        wr = stats.get("win_rate", 1.0)
+        if n >= WEAK_PATTERN_MIN_N and wr < WEAK_PATTERN_WIN_RATE:
             pattern_key = key.replace(":", "=")
             constraints.append({
-                "type": "NEVER_TRADE",
+                "type": "WEAK_PATTERN",
                 "source": "playbook",
                 "pattern": pattern_key,
                 "reason": (
                     f"{stats.get('wins', 0)}/{n} wins ({wr:.0%}) — "
-                    f"avg P&L ${stats.get('avg_pnl', 0):+.2f}"
+                    f"avg P&L ${stats.get('avg_pnl', 0):+.2f}. "
+                    f"Advisory only — single-tag pattern, may lack discriminative power."
                 ),
                 "trades": n,
                 "win_rate": wr,
@@ -167,6 +225,7 @@ def generate_constraints() -> dict:
     logger.info(
         f"Constraints generated: {len(constraints)} total — "
         f"{sum(1 for c in constraints if c['type'] == 'NEVER_TRADE')} NEVER_TRADE, "
+        f"{sum(1 for c in constraints if c['type'] == 'WEAK_PATTERN')} WEAK_PATTERN, "
         f"{sum(1 for c in constraints if c['type'] == 'LOW_CONFIDENCE')} LOW_CONFIDENCE, "
         f"{sum(1 for c in constraints if c['type'] == 'HOLD_PREFERRED')} HOLD_PREFERRED, "
         f"{sum(1 for c in constraints if c['type'] == 'RETIRED_HYPOTHESIS')} RETIRED_HYPOTHESIS"
@@ -205,6 +264,7 @@ def format_constraints_for_brief(current_tags: dict = None) -> str:
     hold_preferred = [c for c in matching if c["type"] == "HOLD_PREFERRED"]
     low_confidence = [c for c in matching if c["type"] == "LOW_CONFIDENCE"]
     retired = [c for c in matching if c["type"] == "RETIRED_HYPOTHESIS"]
+    weak_pattern = [c for c in matching if c["type"] == "WEAK_PATTERN"]
 
     if never_trade:
         for c in never_trade[:3]:
@@ -228,6 +288,12 @@ def format_constraints_for_brief(current_tags: dict = None) -> str:
         for c in retired[:2]:
             parts.append(
                 f"  RETIRED HYPO: {c['reason']}"
+            )
+
+    if weak_pattern:
+        for c in weak_pattern[:2]:
+            parts.append(
+                f"  WEAK PATTERN: {c['pattern']} — {c['reason']}"
             )
 
     if parts:
@@ -258,9 +324,10 @@ def compute_suggested_position_size(
     max_position_value = portfolio_value * 0.5
     max_shares = max_position_value / price if price > 0 else 0
 
-    # Check constraints first — if any NEVER_TRADE matches, suggest 0
+    # Check constraints — only multi-tag NEVER_TRADE blocks trading
     data = load_json(CONSTRAINTS_PATH, default={})
     constraints = data.get("constraints", [])
+    has_weak_pattern = False
     for c in constraints:
         if c["type"] == "NEVER_TRADE" and _constraint_matches_tags(c, current_tags):
             return {
@@ -269,6 +336,8 @@ def compute_suggested_position_size(
                 "max_shares": round(max_shares, 2),
                 "reasoning": f"Blocked by constraint: {c['pattern']} — {c['reason']}",
             }
+        if c["type"] == "WEAK_PATTERN" and _constraint_matches_tags(c, current_tags):
+            has_weak_pattern = True
 
     # Compute confidence score from playbook
     ledger = load_json(LEDGER_PATH, default={})
@@ -312,6 +381,14 @@ def compute_suggested_position_size(
             if current_idx > 0:
                 tier = tier_order[current_idx - 1]
                 reasoning += f" (downgraded: prediction accuracy only {overall_acc:.0%})"
+
+    # WEAK_PATTERN constraints cap at "small" tier — advisory caution
+    if has_weak_pattern and tier not in ("minimum",):
+        tier_order = ["minimum", "small", "normal", "confident"]
+        current_idx = tier_order.index(tier)
+        if current_idx > 1:  # Only downgrade if above "small"
+            tier = "small"
+            reasoning += " (capped: weak single-tag pattern in playbook)"
 
     shares = round(SIZE_TIERS[tier] * max_shares, 2)
     # Ensure minimum cash reserve ($100)

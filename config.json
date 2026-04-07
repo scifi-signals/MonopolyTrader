@@ -43,15 +43,27 @@
   "v8_risk": {
     "trailing_stop_default_pct": 0.015,
     "trailing_stop_min_pct": 0.005,
-    "trailing_stop_max_pct": 0.03,
+    "trailing_stop_max_pct": 0.06,
+    "atr_stop_multiplier": 1.5,
     "time_stop_minutes": 240,
+    "eod_close_minutes_before": 10,
     "daily_loss_limit": 50.0,
     "min_edge_threshold": 0.001,
+    "tightening_tiers": [
+      [0.05, 0.015],
+      [0.03, 0.020],
+      [0.02, 0.025],
+      [0.01, 0.030]
+    ],
+    "recency_half_life_days": 14,
+    "contrarian": {
+      "rsi_threshold": 30,
+      "min_signal_score": -0.008,
+      "max_position_pct": 0.05
+    },
     "adaptive_cycle": {
       "normal_interval_minutes": 15,
-      "high_vol_interval_minutes": 5,
-      "high_vol_vix_threshold": 30,
-      "high_vol_range_threshold_pct": 2.0
+      "position_interval_minutes": 5
     }
   }
 }

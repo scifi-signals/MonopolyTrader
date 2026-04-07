@@ -8,7 +8,7 @@ v8: Replaces the v7 approach of asking Claude to enforce discipline.
 """
 
 from datetime import datetime, timezone, timedelta
-from .utils import load_json, save_json, iso_now, setup_logging, DATA_DIR, load_config
+from .utils import load_json, save_json, iso_now, setup_logging, DATA_DIR, load_config, now_et
 
 logger = setup_logging("risk_manager")
 
@@ -26,42 +26,71 @@ class RiskManager:
         v8 = config.get("v8_risk", {})
         self.trailing_stop_default = v8.get("trailing_stop_default_pct", 0.015)
         self.trailing_stop_min = v8.get("trailing_stop_min_pct", 0.005)
-        self.trailing_stop_max = v8.get("trailing_stop_max_pct", 0.03)
+        self.trailing_stop_max = v8.get("trailing_stop_max_pct", 0.06)
+        self.atr_stop_multiplier = v8.get("atr_stop_multiplier", 1.5)
         self.time_stop_minutes = v8.get("time_stop_minutes", 240)
         self.daily_loss_limit = v8.get("daily_loss_limit", 50.0)
         self.min_edge_threshold = v8.get("min_edge_threshold", 0.001)
+        self.eod_close_minutes_before = v8.get("eod_close_minutes_before", 10)
+
+        # Progressive tightening tiers: (profit_threshold, stop_pct)
+        # Evaluated top-down — first matching tier wins.
+        tiers = v8.get("tightening_tiers", [
+            [0.05, 0.015],  # 5%+ profit: 1.5% stop
+            [0.03, 0.020],  # 3%+ profit: 2.0% stop
+            [0.02, 0.025],  # 2%+ profit: 2.5% stop
+            [0.01, 0.030],  # 1%+ profit: 3.0% stop
+        ])
+        self.tightening_tiers = [(t[0], t[1]) for t in tiers]
 
     def check_trailing_stop(self, current_price: float) -> tuple[bool, str]:
         """Check if trailing stop is triggered on active position.
 
+        For longs: triggers when price drops below peak * (1 - stop_pct).
+        For shorts: triggers when price rises above trough * (1 + stop_pct).
         Returns (triggered, reason).
         """
         position = load_active_position()
         if not position:
             return False, "no position"
 
-        peak = position.get("peak_price", position.get("entry_price", 0))
+        direction = position.get("direction", "long")
+        extreme = position.get("peak_price", position.get("entry_price", 0))
         stop_pct = position.get("trailing_stop_pct", self.trailing_stop_default)
 
-        if peak <= 0:
-            return False, "no peak price"
+        if extreme <= 0:
+            return False, "no peak/trough price"
 
-        stop_price = peak * (1 - stop_pct)
+        if direction == "short":
+            # Short: stop when price rises above trough
+            stop_price = extreme * (1 + stop_pct)
+            if current_price >= stop_price:
+                reason = (
+                    f"Trailing stop triggered (SHORT): price ${current_price:.2f} "
+                    f"above stop ${stop_price:.2f} "
+                    f"(trough ${extreme:.2f}, stop {stop_pct:.1%})"
+                )
+                logger.warning(reason)
+                return True, reason
+            return False, f"OK (stop at ${stop_price:.2f}, {((stop_price - current_price) / current_price * 100):.1f}% above)"
+        else:
+            # Long: stop when price drops below peak
+            stop_price = extreme * (1 - stop_pct)
+            if current_price <= stop_price:
+                reason = (
+                    f"Trailing stop triggered: price ${current_price:.2f} "
+                    f"below stop ${stop_price:.2f} "
+                    f"(peak ${extreme:.2f}, stop {stop_pct:.1%})"
+                )
+                logger.warning(reason)
+                return True, reason
+            return False, f"OK (stop at ${stop_price:.2f}, {((current_price - stop_price) / stop_price * 100):.1f}% above)"
 
-        if current_price <= stop_price:
-            reason = (
-                f"Trailing stop triggered: price ${current_price:.2f} "
-                f"below stop ${stop_price:.2f} "
-                f"(peak ${peak:.2f}, stop {stop_pct:.1%})"
-            )
-            logger.warning(reason)
-            return True, reason
+    def check_time_stop(self, current_price: float = 0) -> tuple[bool, str]:
+        """Check if a stale (non-profitable) position has been held too long.
 
-        return False, f"OK (stop at ${stop_price:.2f}, {((current_price - stop_price) / stop_price * 100):.1f}% above)"
-
-    def check_time_stop(self) -> tuple[bool, str]:
-        """Check if position has been held longer than time_stop_minutes.
-
+        Winning trades are exempt — the trailing stop protects them instead.
+        Only losing/flat trades get time-stopped. Let winners run.
         Returns (triggered, reason).
         """
         position = load_active_position()
@@ -83,15 +112,98 @@ class RiskManager:
         held_minutes = (now - entry_time).total_seconds() / 60
 
         if held_minutes >= self.time_stop_minutes:
+            # Check if the trade is profitable — if so, let it run
+            entry_price = position.get("entry_price", 0)
+            direction = position.get("direction", "long")
+
+            if current_price > 0 and entry_price > 0:
+                if direction == "short":
+                    profitable = current_price < entry_price
+                else:
+                    profitable = current_price > entry_price
+
+                if profitable:
+                    return False, (
+                        f"Time limit reached ({held_minutes:.0f} min) but trade is "
+                        f"profitable — letting winner run (trailing stop protects)"
+                    )
+
             reason = (
                 f"Time stop triggered: held {held_minutes:.0f} min "
-                f"(limit: {self.time_stop_minutes} min)"
+                f"(limit: {self.time_stop_minutes} min) on losing/flat trade"
             )
             logger.warning(reason)
             return True, reason
 
         remaining = self.time_stop_minutes - held_minutes
         return False, f"OK ({held_minutes:.0f} min held, {remaining:.0f} min remaining)"
+
+    def check_eod_close(self) -> tuple[bool, str]:
+        """Check if we need to close positions before market close.
+
+        Closes all positions before market close to avoid overnight gap risk.
+        Returns (triggered, reason).
+        """
+        position = load_active_position()
+        if not position:
+            return False, "no position"
+
+        et = now_et()
+        close_time = et.replace(hour=16, minute=0, second=0, microsecond=0)
+        cutoff = close_time - timedelta(minutes=self.eod_close_minutes_before)
+
+        if et >= cutoff:
+            reason = (
+                f"End-of-day close: {et.strftime('%H:%M')} ET — "
+                f"closing position to avoid overnight gap risk"
+            )
+            logger.warning(reason)
+            return True, reason
+
+        minutes_until = (cutoff - et).total_seconds() / 60
+        return False, f"OK ({minutes_until:.0f} min until EOD close)"
+
+    def tighten_trailing_stop(self, current_price: float):
+        """Progressively tighten trailing stop as profit grows.
+
+        Locks in gains by reducing the stop percentage when the trade
+        is significantly profitable. Winners give back less as they grow.
+        """
+        position = load_active_position()
+        if not position:
+            return
+
+        entry_price = position.get("entry_price", 0)
+        if entry_price <= 0 or current_price <= 0:
+            return
+
+        direction = position.get("direction", "long")
+        current_stop = position.get("trailing_stop_pct", self.trailing_stop_default)
+
+        if direction == "short":
+            profit_pct = (entry_price - current_price) / entry_price
+        else:
+            profit_pct = (current_price - entry_price) / entry_price
+
+        # Find matching tightening tier (first match wins, evaluated top-down)
+        new_stop = None
+        for threshold, stop_pct in self.tightening_tiers:
+            if profit_pct >= threshold:
+                new_stop = stop_pct
+                break
+
+        if new_stop is None:
+            return  # Below lowest tier, don't tighten
+
+        new_stop = max(new_stop, self.trailing_stop_min)
+
+        if new_stop < current_stop:
+            position["trailing_stop_pct"] = new_stop
+            save_json(ACTIVE_POSITION_PATH, position)
+            logger.info(
+                f"Trailing stop tightened: {current_stop:.1%} → {new_stop:.1%} "
+                f"(profit: {profit_pct:.1%})"
+            )
 
     def check_daily_loss_limit(self) -> tuple[bool, str]:
         """Check if today's realized losses exceed the daily limit.
@@ -113,26 +225,29 @@ class RiskManager:
         return False, f"OK (${realized:+.2f} today, ${remaining:.2f} remaining)"
 
     def validate_trade(self, action: str, signal: dict,
-                       portfolio: dict, price: float) -> tuple[bool, str]:
+                       portfolio: dict, price: float,
+                       contrarian: bool = False) -> tuple[bool, str]:
         """Pre-trade validation. Returns (allowed, reason).
 
         Checks:
-        1. Signal score exceeds minimum edge threshold
-        2. Direction matches signal sign (BUY needs positive score)
+        1. Signal score exceeds minimum edge threshold (skip for contrarian)
+        2. Direction matches signal sign (skip for contrarian)
         3. Daily loss limit not hit
-        4. No existing position conflicts
         """
         score = signal.get("score", 0)
 
-        # Check minimum edge
-        if abs(score) < self.min_edge_threshold:
-            return False, f"Edge too small: {score:.4f} < {self.min_edge_threshold}"
+        if not contrarian:
+            # Check minimum edge
+            if abs(score) < self.min_edge_threshold:
+                return False, f"Edge too small: {score:.4f} < {self.min_edge_threshold}"
 
-        # Check direction match
-        if action == "BUY" and score < 0:
-            return False, f"Cannot BUY on bearish signal ({score:+.4f})"
+            # Check direction match
+            if action == "BUY" and score < 0:
+                return False, f"Cannot BUY on bearish signal ({score:+.4f})"
+            if action == "SHORT" and score > 0:
+                return False, f"Cannot SHORT on bullish signal ({score:+.4f})"
 
-        # Check daily loss limit
+        # Check daily loss limit (always enforced, even for contrarian)
         limit_hit, reason = self.check_daily_loss_limit()
         if limit_hit:
             return False, f"Daily limit: {reason}"
@@ -142,6 +257,19 @@ class RiskManager:
     def clamp_stop_pct(self, requested: float) -> float:
         """Clamp a requested trailing stop % to allowed range."""
         return max(self.trailing_stop_min, min(self.trailing_stop_max, requested))
+
+    def compute_atr_stop_pct(self, atr: float, price: float) -> float:
+        """Compute trailing stop % from ATR. Adapts to actual volatility.
+
+        Uses ATR × multiplier as the stop distance, then converts to %.
+        Falls back to default if ATR is unavailable.
+        """
+        if atr <= 0 or price <= 0:
+            return self.trailing_stop_default
+
+        stop_distance = atr * self.atr_stop_multiplier
+        stop_pct = stop_distance / price
+        return self.clamp_stop_pct(stop_pct)
 
 
 # --- Active Position Tracking ---
@@ -155,32 +283,46 @@ def load_active_position() -> dict | None:
 
 
 def save_active_position(entry_price: float, trailing_stop_pct: float,
-                         decision: dict = None):
+                         decision: dict = None, direction: str = "long"):
     """Store active position metadata when opening a trade."""
     position = {
         "entry_price": round(entry_price, 2),
         "entry_time": iso_now(),
-        "peak_price": round(entry_price, 2),
+        "peak_price": round(entry_price, 2),  # High-water for longs, low-water for shorts
         "trailing_stop_pct": trailing_stop_pct,
         "exit_criteria": decision.get("exit_criteria", "") if decision else "",
         "signal_score_at_entry": decision.get("_signal_score", 0) if decision else 0,
+        "direction": direction,
     }
     save_json(ACTIVE_POSITION_PATH, position)
     logger.info(
-        f"Active position opened: ${entry_price:.2f}, "
+        f"Active {direction} position opened: ${entry_price:.2f}, "
         f"trailing stop {trailing_stop_pct:.1%}"
     )
 
 
 def update_peak_price(current_price: float):
-    """Update high-water mark for trailing stop. Called every cycle."""
+    """Update high/low-water mark for trailing stop. Called every cycle.
+
+    For longs: tracks peak (highest price seen).
+    For shorts: tracks trough (lowest price seen).
+    """
     position = load_active_position()
     if not position:
         return
 
-    if current_price > position.get("peak_price", 0):
-        position["peak_price"] = round(current_price, 2)
-        save_json(ACTIVE_POSITION_PATH, position)
+    direction = position.get("direction", "long")
+
+    if direction == "short":
+        # Track trough for short positions
+        if current_price < position.get("peak_price", float("inf")):
+            position["peak_price"] = round(current_price, 2)
+            save_json(ACTIVE_POSITION_PATH, position)
+    else:
+        # Track peak for long positions
+        if current_price > position.get("peak_price", 0):
+            position["peak_price"] = round(current_price, 2)
+            save_json(ACTIVE_POSITION_PATH, position)
 
 
 def clear_active_position():

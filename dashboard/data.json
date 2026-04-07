@@ -1,38 +1,38 @@
 {
-  "generated_at": "2026-04-07T13:58:33.345292+00:00",
+  "generated_at": "2026-04-07T14:14:17.333877+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 342.81,
-    "open": 342.81,
-    "high": 342.81,
-    "low": 342.81,
-    "volume": 12365520,
-    "change": 0.07,
-    "change_pct": 0.02,
-    "timestamp": "2026-04-07 09:58:00-04:00"
+    "price": 340.48,
+    "open": 340.48,
+    "high": 340.48,
+    "low": 340.48,
+    "volume": 16755501,
+    "change": -0.02,
+    "change_pct": -0.01,
+    "timestamp": "2026-04-07 10:14:00-04:00"
   },
   "latest_cycle": {
-    "timestamp": "2026-04-07T13:58:33.142167+00:00",
+    "timestamp": "2026-04-07T14:14:17.133205+00:00",
     "action": "HOLD",
-    "reasoning": "JPMorgan's 60% downside warning and weak Q1 delivery data create strong bearish catalysts that align with our short position. With geopolitical tensions (Iran war) adding market volatility and TSLA below key technical levels, the risk/reward favors maintaining the short despite modest current gains.",
+    "reasoning": "JPMorgan's 60% downside warning provides significant fundamental backing for our short position, while geopolitical tensions with Iran are adding broader market pressure. The bearish signal aligns with current context despite some bullish pre-event patterns.",
     "confidence": 0.7,
     "override": false,
-    "price": 342.9,
+    "price": 340.5,
     "regime": {
       "trend": "bear",
       "directional": "trending",
       "volatility": "normal",
-      "vix": 25.81,
-      "adx": 28.39,
+      "vix": 26.33,
+      "adx": 28.47,
       "strategy_mode": "momentum",
-      "adx_avg_3d": 27.53,
-      "di_positive": 16.95,
-      "di_negative": 39.55,
-      "spy_slope_pct_per_day": -0.1491,
-      "intraday_adx": 40.47,
+      "adx_avg_3d": 27.56,
+      "di_positive": 16.76,
+      "di_negative": 40.24,
+      "spy_slope_pct_per_day": -0.1498,
+      "intraday_adx": 43.33,
       "intraday_directional": "trending"
     },
-    "vix": 25.81
+    "vix": 26.33
   },
   "portfolio": {
     "cash": 1089.1,
@@ -40,20 +40,20 @@
       "TSLA": {
         "shares": -0.3305,
         "avg_cost_basis": 348.19,
-        "current_price": 342.9,
-        "unrealized_pnl": 1.75
+        "current_price": 340.5,
+        "unrealized_pnl": 2.54
       }
     },
-    "total_value": 975.77,
-    "total_pnl": -24.23,
-    "total_pnl_pct": -2.42,
+    "total_value": 976.56,
+    "total_pnl": -23.44,
+    "total_pnl_pct": -2.34,
     "total_trades": 44,
     "winning_trades": 3,
     "losing_trades": 15,
     "created_at": "2026-02-18T20:42:22.417690+00:00",
-    "last_updated": "2026-04-07T13:58:27.956439+00:00",
+    "last_updated": "2026-04-07T14:14:12.125316+00:00",
     "realized_pnl": -25.97,
-    "unrealized_pnl": 1.75,
+    "unrealized_pnl": 2.54,
     "win_rate": 16.7,
     "starting_balance": 1000.0
   },
@@ -2683,9 +2683,9 @@
       "realized_pnl": null,
       "closed_at": null,
       "peak_price": 352.08,
-      "trough_price": 342.8,
-      "peak_unrealized_pnl": 1.78,
-      "trough_unrealized_pnl": 1.21,
+      "trough_price": 340.5,
+      "peak_unrealized_pnl": 2.54,
+      "trough_unrealized_pnl": 2.54,
       "outcome_type": null,
       "thesis_correct": null,
       "hypothesis_tested": null,
@@ -3010,9 +3010,9 @@
     ]
   },
   "signal_registry": {
-    "last_updated": "2026-04-07T13:58:28.691508+00:00",
+    "last_updated": "2026-04-07T14:14:12.920595+00:00",
     "horizon": "1h",
-    "total_outcomes": 487,
+    "total_outcomes": 490,
     "resolved_outcomes": 445,
     "signals": {
       "rsi_zone=neutral": {
@@ -10342,9 +10342,9 @@
     }
   },
   "outcomes_summary": {
-    "total": 487,
+    "total": 490,
     "resolved": 481,
-    "unresolved": 6
+    "unresolved": 9
   },
   "daily_pnl": {
     "date": "2026-04-07",
@@ -10355,8 +10355,8 @@
   "active_position": {
     "entry_price": 348.19,
     "entry_time": "2026-04-06T18:29:41.074615+00:00",
-    "peak_price": 342.8,
-    "trailing_stop_pct": 0.02,
+    "peak_price": 340.5,
+    "trailing_stop_pct": 0.015,
     "exit_criteria": "Close if price breaks above $365 or if geopolitical tensions ease significantly",
     "signal_score_at_entry": -0.001988,
     "direction": "short"
@@ -10368,7 +10368,7 @@
     "model": "claude-sonnet-4-20250514"
   },
   "market_open": true,
-  "time_et": "2026-04-07 09:58 ET",
+  "time_et": "2026-04-07 10:14 ET",
   "config": {
     "starting_balance": 1000.0,
     "risk_params": {

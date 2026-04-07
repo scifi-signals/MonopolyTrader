@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-04-07T19:53:35.086550+00:00",
+  "generated_at": "2026-04-07T20:19:01.240586+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 344.98,
-    "open": 344.69,
-    "high": 345.28,
-    "low": 344.67,
-    "volume": 63426397,
-    "change": 0.3,
-    "change_pct": 0.09,
-    "timestamp": "2026-04-07 15:52:00-04:00"
+    "price": 346.56,
+    "open": 346.29,
+    "high": 346.75,
+    "low": 346.24,
+    "volume": 68823279,
+    "change": 0.27,
+    "change_pct": 0.08,
+    "timestamp": "2026-04-07 15:59:00-04:00"
   },
   "latest_cycle": {
     "timestamp": "2026-04-07T19:53:34.866966+00:00",
@@ -2293,12 +2293,189 @@
       "total_pnl_pct": -2.73,
       "total_trades": 44,
       "timestamp": "2026-04-06T20:15:51.534597+00:00"
+    },
+    {
+      "date": "2026-04-07",
+      "total_value": 975.11,
+      "cash": 975.11,
+      "holdings": {
+        "TSLA": {
+          "shares": 0.0,
+          "avg_cost_basis": 0.0,
+          "current_price": 345.09,
+          "unrealized_pnl": 0.0
+        }
+      },
+      "total_pnl": -24.89,
+      "total_pnl_pct": -2.49,
+      "total_trades": 47,
+      "timestamp": "2026-04-07T20:18:35.226109+00:00"
     }
   ],
   "benchmark": [
     {
       "date": "2026-02-18",
       "value": 1000.0
+    },
+    {
+      "date": "2026-02-19",
+      "value": 1000.95
+    },
+    {
+      "date": "2026-02-20",
+      "value": 1001.22
+    },
+    {
+      "date": "2026-02-21",
+      "value": 1001.22
+    },
+    {
+      "date": "2026-02-22",
+      "value": 1001.22
+    },
+    {
+      "date": "2026-02-23",
+      "value": 972.07
+    },
+    {
+      "date": "2026-02-24",
+      "value": 995.28
+    },
+    {
+      "date": "2026-02-25",
+      "value": 1014.78
+    },
+    {
+      "date": "2026-02-26",
+      "value": 993.34
+    },
+    {
+      "date": "2026-02-27",
+      "value": 978.58
+    },
+    {
+      "date": "2026-02-28",
+      "value": 978.58
+    },
+    {
+      "date": "2026-03-01",
+      "value": 978.58
+    },
+    {
+      "date": "2026-03-02",
+      "value": 980.55
+    },
+    {
+      "date": "2026-03-03",
+      "value": 954.07
+    },
+    {
+      "date": "2026-03-04",
+      "value": 986.92
+    },
+    {
+      "date": "2026-03-05",
+      "value": 985.97
+    },
+    {
+      "date": "2026-03-06",
+      "value": 964.53
+    },
+    {
+      "date": "2026-03-07",
+      "value": 964.53
+    },
+    {
+      "date": "2026-03-08",
+      "value": 964.53
+    },
+    {
+      "date": "2026-03-09",
+      "value": 969.27
+    },
+    {
+      "date": "2026-03-10",
+      "value": 970.63
+    },
+    {
+      "date": "2026-03-11",
+      "value": 991.49
+    },
+    {
+      "date": "2026-03-12",
+      "value": 960.35
+    },
+    {
+      "date": "2026-03-13",
+      "value": 951.08
+    },
+    {
+      "date": "2026-03-16",
+      "value": 961.68
+    },
+    {
+      "date": "2026-03-17",
+      "value": 970.7
+    },
+    {
+      "date": "2026-03-18",
+      "value": 954.93
+    },
+    {
+      "date": "2026-03-19",
+      "value": 924.58
+    },
+    {
+      "date": "2026-03-20",
+      "value": 894.58
+    },
+    {
+      "date": "2026-03-23",
+      "value": 925.92
+    },
+    {
+      "date": "2026-03-24",
+      "value": 931.22
+    },
+    {
+      "date": "2026-03-25",
+      "value": 938.32
+    },
+    {
+      "date": "2026-03-26",
+      "value": 904.67
+    },
+    {
+      "date": "2026-03-27",
+      "value": 879.68
+    },
+    {
+      "date": "2026-03-30",
+      "value": 863.76
+    },
+    {
+      "date": "2026-03-31",
+      "value": 903.8
+    },
+    {
+      "date": "2026-04-01",
+      "value": 926.92
+    },
+    {
+      "date": "2026-04-02",
+      "value": 876.67
+    },
+    {
+      "date": "2026-04-03",
+      "value": 876.67
+    },
+    {
+      "date": "2026-04-06",
+      "value": 857.77
+    },
+    {
+      "date": "2026-04-07",
+      "value": 842.77
     }
   ],
   "trade_journal": [
@@ -3023,6 +3200,11 @@
         "date": "2026-04-06",
         "drawdown_pct": -2.87,
         "peak": 1001.46
+      },
+      {
+        "date": "2026-04-07",
+        "drawdown_pct": -2.63,
+        "peak": 1001.46
       }
     ],
     "rolling_sharpe": [
@@ -3105,6 +3287,10 @@
       {
         "date": "2026-04-06",
         "sharpe": -2.96
+      },
+      {
+        "date": "2026-04-07",
+        "sharpe": 2.8
       }
     ]
   },
@@ -10761,13 +10947,13 @@
   },
   "active_position": {},
   "daily_narrative": {
-    "date": "2026-04-06",
-    "narrative": "**TSLA Market Narrative - Evening Update**\n\nTesla closed flat at $352.79 despite enduring a barrage of bearish catalysts throughout the session. The stock traded in a volatile range, hitting an intraday low around $348.84 before recovering to unchanged levels on modest volume. One notable short trade captured nearly $10 of downside movement from $358.56 to $348.84, suggesting the selling pressure was real but ultimately contained by technical support levels.\n\nThe primary driver today was JPMorgan's bombshell research note warning that TSLA could crash 60% from current levels. This follows mounting concerns over Q1 delivery shortfalls and broader execution risks facing the EV giant. The timing is particularly damaging as it compounds recent regulatory developments, including NHTSA closing its Smart Summon investigation after documenting 159 incidents. Adding insult to injury, Xiaomi poached Tesla's Senior Manager of Delivery Operations for Central Europe, signaling potential talent drain as competition intensifies.\n\nKey technical levels emerged from today's action. The $348-349 area proved to be solid support, holding multiple tests during the session. Resistance remains at the $358-360 zone where selling emerged early. With TSLA now trading below its 20-day moving average in a confirmed bearish trend, the next major support sits around $340. A break below that level could accelerate selling toward JPMorgan's dire price targets.\n\nActive catalysts remain heavily skewed bearish. The analyst downgrades are likely to trigger additional selling pressure from momentum-driven funds. Q1 delivery concerns won't be resolved until the official numbers drop, keeping uncertainty elevated. Meanwhile, broader geopolitical tensions around Iran are creating macro headwinds that historically weigh on high-beta growth stocks like Tesla.\n\nThe signal engine shows concerning breadth in bearish indicators. Geopolitical catalyst signals carry negative edge with high conviction, while the stock trading below its 20-day average in a bear trend regime reinforces the technical deterioration. The mixed intraday regime suggests continued volatility, while normal VIX levels indicate this selling may just be getting started. Notably absent are any strong bullish signals, with even Musk-personal catalysts showing only modest positive edge on limited sample size. The convergence of fundamental, technical, and sentiment headwinds suggests tomorrow could see follow-through selling if $348 support fails.",
-    "generated_at": "2026-04-06T20:16:14.462060+00:00",
+    "date": "2026-04-07",
+    "narrative": "**Tesla Market Narrative - January 21, 2025**\n\nTesla closed virtually flat at $346.56 (+0.08%) in a session marked by heightened volatility and mixed trading patterns. The stock showed intraday weakness, declining from early morning highs near $358 to test support around $341 before recovering. Volume appeared elevated relative to recent sessions, suggesting institutional activity around key technical levels. The day's trading reflected the broader uncertainty gripping markets as geopolitical tensions dominate headlines.\n\nThe primary catalyst weighing on Tesla and broader markets is escalating geopolitical risk, particularly Trump's Iran ultimatum deadline creating uncertainty around energy prices and economic policy. JPMorgan's aggressive downgrade warning of a potential 60% decline in Tesla shares added selling pressure, representing the type of analyst negativity that has historically pressured the stock. Meanwhile, an Autopilot-related DUI incident in California provided another regulatory overhang, though this appears to be a minor catalyst compared to macro concerns. The geopolitical backdrop is creating risk-off sentiment that's particularly impacting growth names like Tesla.\n\nKey technical levels emerged from today's action, with $341-342 proving to be important intraday support after two successful tests. The morning resistance around $358 now represents a significant hurdle, while the closing level near $346-347 sits in a neutral zone. The stock remains below its 20-day moving average, confirming the bearish trend signal that's been weighing on momentum.\n\nLooking ahead, the Iran situation remains the dominant catalyst, with Trump's deadline creating binary risk that could drive significant volatility in either direction. Fed policy uncertainty tied to geopolitical developments adds another layer of complexity. Tesla's upcoming earnings on April 30th and the R2 launch timeline remain longer-term catalysts, though near-term trading will likely be dominated by macro factors.\n\nThe signal registry reveals concerning patterns, with geopolitical catalysts showing negative edge (-0.0066) across 67 historical outcomes. Analyst-driven moves also show negative edge (-0.0048), making JPMorgan's downgrade particularly noteworthy. The mixed intraday regime (-0.0043 edge) and morning weakness signals align with today's volatile price action. Interestingly, Musk personal news shows positive edge (+0.0075), though with limited sample size. The convergence of negative signals around geopolitical risk, analyst pressure, and technical weakness suggests tomorrow's patterns may favor continued volatility with downside bias.",
+    "generated_at": "2026-04-07T20:19:00.642892+00:00",
     "model": "claude-sonnet-4-20250514"
   },
-  "market_open": true,
-  "time_et": "2026-04-07 15:53 ET",
+  "market_open": false,
+  "time_et": "2026-04-07 16:19 ET",
   "config": {
     "starting_balance": 1000.0,
     "risk_params": {

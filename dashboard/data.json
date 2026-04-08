@@ -1,38 +1,38 @@
 {
-  "generated_at": "2026-04-08T13:41:26.505559+00:00",
+  "generated_at": "2026-04-08T13:57:12.486403+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 355.62,
-    "open": 355.62,
-    "high": 355.62,
-    "low": 355.62,
-    "volume": 10389809,
-    "change": -0.51,
-    "change_pct": -0.14,
-    "timestamp": "2026-04-08 09:41:00-04:00"
+    "price": 353.86,
+    "open": 353.86,
+    "high": 353.86,
+    "low": 353.86,
+    "volume": 15086449,
+    "change": -0.3,
+    "change_pct": -0.09,
+    "timestamp": "2026-04-08 09:57:00-04:00"
   },
   "latest_cycle": {
-    "timestamp": "2026-04-08T13:41:26.287567+00:00",
+    "timestamp": "2026-04-08T13:57:12.198762+00:00",
     "action": "HOLD",
-    "reasoning": "Despite the bullish FSD 14.3 release generating positive headlines, Tesla remains below key technical levels and faces significant headwinds from JPMorgan's harsh downgrade warning of 60% downside. The broader market rally (+2.4% SPY) provides some support, but Tesla's relative underperformance (-0.1% vs market) suggests company-specific concerns are weighing on sentiment.",
+    "reasoning": "Despite positive FSD 14.3 news and strong market rally (+2.3% SPY), TSLA remains below key resistance at $358-360 and faces headwinds from JPMorgan's severe downgrade warning of 60% downside. The bullish signal strength is offset by technical weakness and mixed sentiment.",
     "confidence": 0.4,
-    "override": false,
-    "price": 355.83,
+    "override": true,
+    "price": 354.62,
     "regime": {
       "trend": "bear",
       "directional": "trending",
       "volatility": "normal",
-      "vix": 20.13,
+      "vix": 20.37,
       "adx": 27.56,
       "strategy_mode": "momentum",
       "adx_avg_3d": 27.35,
       "di_positive": 22.97,
       "di_negative": 37.58,
-      "spy_slope_pct_per_day": -0.141,
-      "intraday_adx": 40.72,
+      "spy_slope_pct_per_day": -0.1412,
+      "intraday_adx": 47.52,
       "intraday_directional": "trending"
     },
-    "vix": 20.13
+    "vix": 20.37
   },
   "portfolio": {
     "cash": 858.98,
@@ -40,20 +40,20 @@
       "TSLA": {
         "shares": 0.319,
         "avg_cost_basis": 364.04,
-        "current_price": 355.83,
-        "unrealized_pnl": -2.62
+        "current_price": 354.62,
+        "unrealized_pnl": -3.0
       }
     },
-    "total_value": 972.49,
-    "total_pnl": -27.51,
-    "total_pnl_pct": -2.75,
+    "total_value": 972.1,
+    "total_pnl": -27.9,
+    "total_pnl_pct": -2.79,
     "total_trades": 48,
     "winning_trades": 4,
     "losing_trades": 16,
     "created_at": "2026-02-18T20:42:22.417690+00:00",
-    "last_updated": "2026-04-08T13:41:19.477195+00:00",
+    "last_updated": "2026-04-08T13:57:06.160783+00:00",
     "realized_pnl": -24.89,
-    "unrealized_pnl": -2.62,
+    "unrealized_pnl": -3.0,
     "win_rate": 20.0,
     "starting_balance": 1000.0
   },
@@ -3020,9 +3020,9 @@
       "realized_pnl": null,
       "closed_at": null,
       "peak_price": 364.05,
-      "trough_price": 355.64,
+      "trough_price": 354.62,
       "peak_unrealized_pnl": 0.0,
-      "trough_unrealized_pnl": -2.68,
+      "trough_unrealized_pnl": -3.01,
       "outcome_type": null,
       "thesis_correct": null,
       "hypothesis_tested": null,
@@ -3359,9 +3359,9 @@
     ]
   },
   "signal_registry": {
-    "last_updated": "2026-04-08T13:41:22.179380+00:00",
+    "last_updated": "2026-04-08T13:57:06.970203+00:00",
     "horizon": "1h",
-    "total_outcomes": 550,
+    "total_outcomes": 553,
     "resolved_outcomes": 511,
     "signals": {
       "rsi_zone=neutral": {
@@ -11055,9 +11055,9 @@
     }
   },
   "outcomes_summary": {
-    "total": 550,
+    "total": 553,
     "resolved": 547,
-    "unresolved": 3
+    "unresolved": 6
   },
   "daily_pnl": {
     "date": "2026-04-08",
@@ -11081,7 +11081,7 @@
     "model": "claude-sonnet-4-20250514"
   },
   "market_open": true,
-  "time_et": "2026-04-08 09:41 ET",
+  "time_et": "2026-04-08 09:57 ET",
   "config": {
     "starting_balance": 1000.0,
     "risk_params": {

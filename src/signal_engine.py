@@ -8,6 +8,7 @@ v8: Replaces thesis_builder, constraint_generator, hold_analyzer,
 prediction_diagnosis, and pattern_explorer with one data-driven system.
 """
 
+from datetime import datetime, timezone
 from itertools import combinations
 from .utils import load_json, save_json, iso_now, setup_logging, DATA_DIR
 from .outcome_tracker import get_resolved_outcomes, get_total_outcomes
@@ -18,6 +19,10 @@ REGISTRY_PATH = DATA_DIR / "signal_registry.json"
 
 # Minimum change threshold — movements below this are "flat" (noise)
 FLAT_THRESHOLD = 0.001  # 0.1%
+
+# Minimum directional imbalance to classify as bullish/bearish
+# 0.05 = 52.5% vs 47.5% split
+DIR_THRESHOLD = 0.05
 
 # Confidence tiers by sample size
 CONFIDENCE_TIERS = {
@@ -45,29 +50,57 @@ def _classify_confidence(n: int) -> tuple[str, float]:
         return "insufficient", 0.0
 
 
-def _compute_signal_stats(changes: list[float]) -> dict:
-    """Compute signal statistics from a list of price changes.
+def _compute_signal_stats(entries: list[tuple], half_life_days: float = 14.0) -> dict:
+    """Compute signal statistics with recency weighting.
 
     Args:
-        changes: List of fractional price changes (e.g., 0.005 = +0.5%)
+        entries: List of (change, timestamp_str) tuples.
+        half_life_days: Exponential decay half-life. Recent outcomes
+            count more — a 14-day-old observation has half the weight
+            of today's.
 
     Returns:
         Dict with up_rate, avg_up, avg_down, expected_edge, etc.
     """
-    n = len(changes)
+    n = len(entries)
     if n == 0:
         return {"n": 0, "expected_edge": 0.0}
 
-    up = [c for c in changes if c > FLAT_THRESHOLD]
-    down = [c for c in changes if c < -FLAT_THRESHOLD]
-    flat = [c for c in changes if abs(c) <= FLAT_THRESHOLD]
+    now = datetime.now(timezone.utc)
 
-    up_rate = len(up) / n if n > 0 else 0
-    avg_up = sum(up) / len(up) if up else 0
-    avg_down = sum(down) / len(down) if down else 0
+    weighted = []
+    for change, ts in entries:
+        try:
+            t = datetime.fromisoformat(ts)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            age_days = max((now - t).total_seconds() / 86400, 0)
+            w = 0.5 ** (age_days / half_life_days)
+        except (ValueError, TypeError):
+            w = 0.5  # fallback for bad timestamps
+        weighted.append((change, w))
 
-    # Expected edge: probability-weighted average outcome
-    expected_edge = sum(changes) / n
+    total_w = sum(w for _, w in weighted)
+    if total_w == 0:
+        return {"n": n, "expected_edge": 0.0}
+
+    up = [(c, w) for c, w in weighted if c > FLAT_THRESHOLD]
+    down = [(c, w) for c, w in weighted if c < -FLAT_THRESHOLD]
+    flat = [(c, w) for c, w in weighted if abs(c) <= FLAT_THRESHOLD]
+
+    up_w = sum(w for _, w in up)
+    down_w = sum(w for _, w in down)
+
+    up_rate = up_w / total_w if total_w > 0 else 0
+    down_rate = down_w / total_w if total_w > 0 else 0
+    avg_up = sum(c * w for c, w in up) / up_w if up_w > 0 else 0
+    avg_down = sum(c * w for c, w in down) / down_w if down_w > 0 else 0
+
+    expected_edge = sum(c * w for c, w in weighted) / total_w
+
+    # Directional score: positive = bullish, negative = bearish
+    # Range: -1.0 (always down) to +1.0 (always up)
+    directional_score = up_rate - down_rate
 
     confidence_label, confidence_factor = _classify_confidence(n)
 
@@ -77,10 +110,12 @@ def _compute_signal_stats(changes: list[float]) -> dict:
         "down_count": len(down),
         "flat_count": len(flat),
         "up_rate": round(up_rate, 4),
+        "down_rate": round(down_rate, 4),
         "avg_up": round(avg_up, 6),
         "avg_down": round(avg_down, 6),
         "avg_change": round(expected_edge, 6),
         "expected_edge": round(expected_edge, 6),
+        "directional_score": round(directional_score, 4),
         "confidence": confidence_label,
         "confidence_factor": confidence_factor,
         "weight": round(expected_edge * confidence_factor, 6),
@@ -88,10 +123,12 @@ def _compute_signal_stats(changes: list[float]) -> dict:
 
 
 def rebuild_signal_registry(horizon: str = DEFAULT_HORIZON,
-                            lookback_days: int = 90) -> dict:
+                            lookback_days: int = 90,
+                            half_life_days: float = 14.0) -> dict:
     """Recompute all signal weights from resolved cycle outcomes.
 
     Called every cycle. Fast — just arithmetic on ~300 records.
+    Applies exponential decay so recent outcomes weigh more.
 
     Returns the full registry dict (also saved to disk).
     """
@@ -109,46 +146,48 @@ def rebuild_signal_registry(horizon: str = DEFAULT_HORIZON,
         save_json(REGISTRY_PATH, registry)
         return registry
 
-    # Group changes by single-tag values
-    tag_changes = {}  # "rsi_zone=oversold" -> [change1, change2, ...]
+    # Group (change, timestamp) by single-tag values
+    tag_entries = {}  # "rsi_zone=oversold" -> [(change, timestamp), ...]
     for o in outcomes:
         change = o.get("changes", {}).get(horizon)
         if change is None:
             continue
+        ts = o.get("timestamp", "")
         tags = o.get("tags", {})
         for tag_name, tag_value in tags.items():
             key = f"{tag_name}={tag_value}"
-            if key not in tag_changes:
-                tag_changes[key] = []
-            tag_changes[key].append(change)
+            if key not in tag_entries:
+                tag_entries[key] = []
+            tag_entries[key].append((change, ts))
 
-    # Compute single-tag signals
+    # Compute single-tag signals with recency weighting
     signals = {}
-    for key, changes in tag_changes.items():
-        stats = _compute_signal_stats(changes)
+    for key, entries in tag_entries.items():
+        stats = _compute_signal_stats(entries, half_life_days)
         if stats["n"] >= CONFIDENCE_TIERS["low"]["min_n"]:
             signals[key] = stats
 
-    # Group changes by 2-tag combos
-    combo_changes = {}
+    # Group (change, timestamp) by 2-tag combos
+    combo_entries = {}
     for o in outcomes:
         change = o.get("changes", {}).get(horizon)
         if change is None:
             continue
+        ts = o.get("timestamp", "")
         tags = o.get("tags", {})
         tag_items = sorted(tags.items())
         for (t1, v1), (t2, v2) in combinations(tag_items, 2):
             combo_key = f"{t1}={v1}+{t2}={v2}"
-            if combo_key not in combo_changes:
-                combo_changes[combo_key] = []
-            combo_changes[combo_key].append(change)
+            if combo_key not in combo_entries:
+                combo_entries[combo_key] = []
+            combo_entries[combo_key].append((change, ts))
 
-    # Compute 2-tag combo signals
+    # Compute 2-tag combo signals with recency weighting
     combos = {}
-    for key, changes in combo_changes.items():
-        if len(changes) < COMBO_MIN_N:
+    for key, entries in combo_entries.items():
+        if len(entries) < COMBO_MIN_N:
             continue
-        stats = _compute_signal_stats(changes)
+        stats = _compute_signal_stats(entries, half_life_days)
         combos[key] = stats
 
     registry = {
@@ -222,6 +261,7 @@ def compute_composite_score(current_tags: dict, registry: dict = None) -> dict:
             "direction": "neutral",
             "confidence": "none",
             "confidence_factor": 0.0,
+            "edge": 0.0,
             "n": 0,
             "contributing_signals": 0,
             "bullish": [],
@@ -230,46 +270,64 @@ def compute_composite_score(current_tags: dict, registry: dict = None) -> dict:
             "exploration_targets": _find_exploration_targets(current_tags, signals),
         }
 
-    # Weighted average by sample size
+    # Weighted average of DIRECTIONAL SCORES by sample size.
+    # Directional score = up_rate - down_rate per tag.
+    # Positive = bullish (more ups), negative = bearish (more downs).
+    # This replaces the old edge-based composite which missed setups
+    # where price went down 60-70% of the time but big bounces made
+    # the average return near zero.
     total_n = sum(s["n"] for s in primary)
     if total_n == 0:
         composite = 0.0
         avg_confidence_factor = 0.0
+        edge_composite = 0.0
     else:
-        composite = sum(s["expected_edge"] * s["n"] for s in primary) / total_n
+        composite = sum(
+            s.get("directional_score", s.get("up_rate", 0.5) - s.get("down_rate", 0.5))
+            * s["n"]
+            for s in primary
+        ) / total_n
         avg_confidence_factor = sum(
             s["confidence_factor"] * s["n"] for s in primary
         ) / total_n
+        # Keep edge as reference for AI context
+        edge_composite = sum(
+            s["expected_edge"] * s["n"] for s in primary
+        ) / total_n
 
-    # Classify direction
-    if composite > FLAT_THRESHOLD / 2:
+    # Classify direction using directional threshold
+    if composite > DIR_THRESHOLD:
         direction = "bullish"
-    elif composite < -FLAT_THRESHOLD / 2:
+    elif composite < -DIR_THRESHOLD:
         direction = "bearish"
     else:
         direction = "neutral"
 
-    # Split into bullish/bearish/neutral for display
+    # Split into bullish/bearish/neutral by per-tag directional score
+    def _dir_score(s):
+        return s.get("directional_score", s.get("up_rate", 0.5) - s.get("down_rate", 0.5))
+
     bullish = sorted(
-        [s for s in primary if s["expected_edge"] > FLAT_THRESHOLD / 2],
-        key=lambda s: -s["expected_edge"],
+        [s for s in primary if _dir_score(s) > DIR_THRESHOLD],
+        key=lambda s: -_dir_score(s),
     )
     bearish = sorted(
-        [s for s in primary if s["expected_edge"] < -FLAT_THRESHOLD / 2],
-        key=lambda s: s["expected_edge"],
+        [s for s in primary if _dir_score(s) < -DIR_THRESHOLD],
+        key=lambda s: _dir_score(s),
     )
     neutral_sigs = [
         s for s in primary
-        if abs(s["expected_edge"]) <= FLAT_THRESHOLD / 2
+        if abs(_dir_score(s)) <= DIR_THRESHOLD
     ]
 
     conf_label, _ = _classify_confidence(total_n)
 
     return {
-        "score": round(composite, 6),
+        "score": round(composite, 4),
         "direction": direction,
         "confidence": conf_label,
         "confidence_factor": round(avg_confidence_factor, 3),
+        "edge": round(edge_composite, 6),
         "n": total_n,
         "contributing_signals": len(primary),
         "bullish": bullish[:5],
@@ -306,7 +364,7 @@ def compute_position_size(signal: dict, portfolio_value: float,
     score = abs(signal.get("score", 0))
     confidence_factor = signal.get("confidence_factor", 0)
     risk_config = config.get("v8_risk", {})
-    min_edge = risk_config.get("min_edge_threshold", 0.001)
+    min_edge = risk_config.get("min_edge_threshold", 0.08)
 
     max_position_pct = config.get("risk_params", {}).get("max_position_pct", 0.50)
     min_cash = config.get("risk_params", {}).get("min_cash_reserve", 100.0)
@@ -318,21 +376,25 @@ def compute_position_size(signal: dict, portfolio_value: float,
             "pct": 0,
             "shares": 0,
             "value": 0,
-            "reasoning": f"Edge {score:.4f} below minimum {min_edge:.4f}",
+            "reasoning": f"Directional score {score:.3f} below minimum {min_edge:.3f}",
         }
 
-    # Base percentage tiers
-    if score > 0.006:
-        base_pct = 0.35  # 25-40%
+    # Base percentage tiers (directional score scale: 0.0 to 1.0)
+    # 0.30+ = 65%+ directional probability → large position
+    # 0.20+ = 60%+ → medium
+    # 0.10+ = 55%+ → small
+    # 0.08+ = 54%+ → minimum/exploration
+    if score > 0.30:
+        base_pct = 0.35
         tier = "large"
-    elif score > 0.003:
-        base_pct = 0.20  # 15-25%
+    elif score > 0.20:
+        base_pct = 0.20
         tier = "medium"
-    elif score > 0.001:
-        base_pct = 0.12  # 10-15%
+    elif score > 0.10:
+        base_pct = 0.12
         tier = "small"
     else:
-        base_pct = 0.05  # 5% exploration
+        base_pct = 0.05
         tier = "minimum"
 
     # Apply confidence multiplier
@@ -379,25 +441,29 @@ def get_signal_summary(current_tags: dict, signal: dict = None,
     direction = signal["direction"]
     confidence = signal.get("confidence", "none")
     n = signal.get("n", 0)
+    edge = signal.get("edge", 0)
 
     parts = []
     parts.append(
-        f"Composite: {score:+.4f} ({direction}) | "
+        f"Direction: {score:+.3f} ({direction}) | "
+        f"Edge: {edge:+.6f} | "
         f"Confidence: {confidence.upper()} (n={n})"
     )
 
-    # Top bullish signals
+    # Top bullish signals (by directional score)
     for s in signal.get("bullish", [])[:3]:
+        ds = s.get("directional_score", s.get("up_rate", 0.5) - s.get("down_rate", 0.5))
         parts.append(
-            f"  Bullish: {s['key']} {s['expected_edge']:+.4f} "
-            f"(n={s['n']}, {s['up_rate']:.0%} up)"
+            f"  Bullish: {s['key']} dir={ds:+.3f} "
+            f"(n={s['n']}, {s['up_rate']:.0%} up / {s.get('down_rate', 1-s['up_rate']):.0%} dn)"
         )
 
-    # Top bearish signals
+    # Top bearish signals (by directional score)
     for s in signal.get("bearish", [])[:3]:
+        ds = s.get("directional_score", s.get("up_rate", 0.5) - s.get("down_rate", 0.5))
         parts.append(
-            f"  Bearish: {s['key']} {s['expected_edge']:+.4f} "
-            f"(n={s['n']}, {s['up_rate']:.0%} up)"
+            f"  Bearish: {s['key']} dir={ds:+.3f} "
+            f"(n={s['n']}, {s['up_rate']:.0%} up / {s.get('down_rate', 1-s['up_rate']):.0%} dn)"
         )
 
     # Exploration targets

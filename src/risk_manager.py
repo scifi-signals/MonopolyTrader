@@ -32,6 +32,7 @@ class RiskManager:
         self.daily_loss_limit = v8.get("daily_loss_limit", 50.0)
         self.min_edge_threshold = v8.get("min_edge_threshold", 0.001)
         self.eod_close_minutes_before = v8.get("eod_close_minutes_before", 10)
+        self.reentry_cooldown_minutes = v8.get("reentry_cooldown_minutes", 60)
 
         # Progressive tightening tiers: (profit_threshold, stop_pct)
         # Evaluated top-down — first matching tier wins.
@@ -373,3 +374,47 @@ def record_trade_pnl(realized_pnl: float):
 def get_daily_pnl_value() -> float:
     """Get today's realized P&L as a float."""
     return load_daily_pnl().get("realized_pnl", 0.0)
+
+
+# --- Re-entry Cooldown ---
+
+LAST_EXIT_PATH = DATA_DIR / "last_exit.json"
+
+
+def record_exit_time(reason: str = ""):
+    """Record when a position was exited (for cooldown tracking)."""
+    save_json(LAST_EXIT_PATH, {
+        "exit_time": iso_now(),
+        "reason": reason,
+    })
+    logger.info(f"Exit recorded for cooldown tracking")
+
+
+def check_reentry_cooldown(cooldown_minutes: int = 60) -> tuple[bool, str]:
+    """Check if enough time has passed since the last exit.
+
+    Returns (blocked, reason). blocked=True means we're in cooldown.
+    """
+    data = load_json(LAST_EXIT_PATH, default={})
+    exit_time_str = data.get("exit_time")
+    if not exit_time_str:
+        return False, "no recent exit"
+
+    try:
+        exit_time = datetime.fromisoformat(exit_time_str)
+        if exit_time.tzinfo is None:
+            exit_time = exit_time.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return False, "invalid exit time"
+
+    now = datetime.now(timezone.utc)
+    elapsed = (now - exit_time).total_seconds() / 60
+
+    if elapsed < cooldown_minutes:
+        remaining = cooldown_minutes - elapsed
+        return True, (
+            f"Re-entry cooldown: {elapsed:.0f}min since last exit, "
+            f"{remaining:.0f}min remaining (limit: {cooldown_minutes}min)"
+        )
+
+    return False, f"cooldown clear ({elapsed:.0f}min since last exit)"

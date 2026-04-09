@@ -37,6 +37,11 @@ COMBO_MIN_N = 10
 # Default horizon for signal computation
 DEFAULT_HORIZON = "1h"
 
+# Tags that define market regime/structure. Combos must include at least
+# one of these to be used in the composite — otherwise they're just
+# averaging across all regimes and add noise.
+REGIME_TAGS = {"trend_direction", "trend", "sma20_position"}
+
 
 def _classify_confidence(n: int) -> tuple[str, float]:
     """Return (confidence_label, confidence_factor) based on sample size."""
@@ -237,10 +242,16 @@ def compute_composite_score(current_tags: dict, registry: dict = None) -> dict:
             sig["key"] = key
             matching_singles.append(sig)
 
-    # Collect matching 2-tag combo signals
+    # Collect matching 2-tag combo signals.
+    # Filter: at least one tag in each combo must be a regime-defining
+    # tag (trend_direction, trend, sma20_position). Combos without any
+    # regime tag just average across all market conditions — they carry
+    # TSLA's overall bias rather than regime-specific signal.
     matching_combos = []
     tag_items = sorted(current_tags.items())
     for (t1, v1), (t2, v2) in combinations(tag_items, 2):
+        if t1 not in REGIME_TAGS and t2 not in REGIME_TAGS:
+            continue  # skip regime-agnostic combos
         combo_key = f"{t1}={v1}+{t2}={v2}"
         if combo_key in combos:
             sig = combos[combo_key].copy()

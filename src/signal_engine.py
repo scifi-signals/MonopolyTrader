@@ -123,8 +123,8 @@ def _compute_signal_stats(entries: list[tuple], half_life_days: float = 14.0) ->
 
 
 def rebuild_signal_registry(horizon: str = DEFAULT_HORIZON,
-                            lookback_days: int = 90,
-                            half_life_days: float = 14.0) -> dict:
+                            lookback_days: int = 365,
+                            half_life_days: float = 30.0) -> dict:
     """Recompute all signal weights from resolved cycle outcomes.
 
     Called every cycle. Fast — just arithmetic on ~300 records.

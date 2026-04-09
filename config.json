@@ -55,7 +55,7 @@
       [0.02, 0.025],
       [0.01, 0.030]
     ],
-    "recency_half_life_days": 14,
+    "recency_half_life_days": 30,
     "contrarian": {
       "rsi_threshold": 30,
       "min_signal_score": -0.40,

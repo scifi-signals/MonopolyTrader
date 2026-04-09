@@ -1,38 +1,38 @@
 {
-  "generated_at": "2026-04-09T13:55:47.615166+00:00",
+  "generated_at": "2026-04-09T14:11:55.422611+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 339.36,
-    "open": 339.36,
-    "high": 339.36,
-    "low": 339.36,
-    "volume": 9938292,
-    "change": 0.35,
-    "change_pct": 0.1,
-    "timestamp": "2026-04-09 09:55:00-04:00"
+    "price": 339.25,
+    "open": 339.25,
+    "high": 339.25,
+    "low": 339.25,
+    "volume": 13890953,
+    "change": 0.65,
+    "change_pct": 0.19,
+    "timestamp": "2026-04-09 10:11:00-04:00"
   },
   "latest_cycle": {
-    "timestamp": "2026-04-09T13:55:47.025384+00:00",
+    "timestamp": "2026-04-09T14:11:54.979965+00:00",
     "action": "HOLD",
-    "reasoning": "Holding short position as bearish catalysts align with technical weakness. Musk's false FSD safety claims amid mounting lawsuits create regulatory headwinds, while JPMorgan's 60% downside warning adds institutional pressure. Morning open in bear trend historically shows 83% down probability.",
-    "confidence": 0.7,
-    "override": false,
-    "price": 339.4,
+    "reasoning": "While bearish signal confirms our short thesis, Musk's false FSD safety claims create regulatory risk that could trigger sharp reversal. The mixed news on cheaper EV development and Cathie Wood buying adds uncertainty to timing.",
+    "confidence": 0.4,
+    "override": true,
+    "price": 338.6,
     "regime": {
       "trend": "bear",
       "directional": "trending",
       "volatility": "normal",
-      "vix": 20.96,
-      "adx": 29.3,
+      "vix": 21.05,
+      "adx": 29.33,
       "strategy_mode": "momentum",
       "adx_avg_3d": 29.62,
-      "di_positive": 21.29,
-      "di_negative": 36.02,
+      "di_positive": 21.23,
+      "di_negative": 36.18,
       "spy_slope_pct_per_day": -0.1329,
-      "intraday_adx": 26.97,
+      "intraday_adx": 29.75,
       "intraday_directional": "trending"
     },
-    "vix": 20.96
+    "vix": 21.05
   },
   "portfolio": {
     "cash": 1087.15,
@@ -40,20 +40,20 @@
       "TSLA": {
         "shares": -0.3399,
         "avg_cost_basis": 342.54,
-        "current_price": 339.4,
-        "unrealized_pnl": 1.07
+        "current_price": 338.6,
+        "unrealized_pnl": 1.34
       }
     },
-    "total_value": 971.79,
-    "total_pnl": -28.21,
-    "total_pnl_pct": -2.82,
+    "total_value": 972.06,
+    "total_pnl": -27.94,
+    "total_pnl_pct": -2.79,
     "total_trades": 52,
     "winning_trades": 4,
     "losing_trades": 18,
     "created_at": "2026-02-18T20:42:22.417690+00:00",
-    "last_updated": "2026-04-09T13:55:35.815535+00:00",
+    "last_updated": "2026-04-09T14:11:41.008355+00:00",
     "realized_pnl": -29.28,
-    "unrealized_pnl": 1.07,
+    "unrealized_pnl": 1.34,
     "win_rate": 18.2,
     "starting_balance": 1000.0
   },
@@ -3201,9 +3201,9 @@
       "realized_pnl": null,
       "closed_at": null,
       "peak_price": 344.66,
-      "trough_price": 339.4,
-      "peak_unrealized_pnl": 1.07,
-      "trough_unrealized_pnl": 1.07,
+      "trough_price": 338.08,
+      "peak_unrealized_pnl": 1.52,
+      "trough_unrealized_pnl": 1.34,
       "outcome_type": null,
       "thesis_correct": null,
       "hypothesis_tested": null,
@@ -3551,9 +3551,9 @@
     ]
   },
   "signal_registry": {
-    "last_updated": "2026-04-09T13:55:40.624301+00:00",
+    "last_updated": "2026-04-09T14:11:46.037600+00:00",
     "horizon": "1h",
-    "total_outcomes": 3990,
+    "total_outcomes": 3993,
     "resolved_outcomes": 2210,
     "signals": {
       "rsi_zone=neutral": {
@@ -17881,9 +17881,9 @@
     }
   },
   "outcomes_summary": {
-    "total": 3990,
+    "total": 3993,
     "resolved": 3985,
-    "unresolved": 5
+    "unresolved": 8
   },
   "daily_pnl": {
     "date": "2026-04-09",
@@ -17894,8 +17894,8 @@
   "active_position": {
     "entry_price": 342.54,
     "entry_time": "2026-04-09T13:34:16.602132+00:00",
-    "peak_price": 339.4,
-    "trailing_stop_pct": 0.06,
+    "peak_price": 338.08,
+    "trailing_stop_pct": 0.03,
     "exit_criteria": "Close if breaks above $350 resistance or if FSD regulatory news turns positive",
     "signal_score_at_entry": -0.1546,
     "direction": "short"
@@ -17907,7 +17907,7 @@
     "model": "claude-sonnet-4-20250514"
   },
   "market_open": true,
-  "time_et": "2026-04-09 09:55 ET",
+  "time_et": "2026-04-09 10:11 ET",
   "config": {
     "starting_balance": 1000.0,
     "risk_params": {

@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-04-09T19:54:38.820241+00:00",
+  "generated_at": "2026-04-09T20:20:03.920481+00:00",
   "ticker": "TSLA",
   "current_price": {
-    "price": 345.2,
-    "open": 345.2,
-    "high": 345.2,
-    "low": 345.2,
-    "volume": 57366653,
-    "change": 0.42,
-    "change_pct": 0.12,
-    "timestamp": "2026-04-09 15:54:00-04:00"
+    "price": 345.59,
+    "open": 345.41,
+    "high": 345.8,
+    "low": 345.36,
+    "volume": 61134264,
+    "change": 0.19,
+    "change_pct": 0.06,
+    "timestamp": "2026-04-09 15:59:00-04:00"
   },
   "latest_cycle": {
     "timestamp": "2026-04-09T19:54:38.525111+00:00",
@@ -2447,6 +2447,23 @@
       "total_pnl_pct": -2.93,
       "total_trades": 51,
       "timestamp": "2026-04-08T20:17:44.445086+00:00"
+    },
+    {
+      "date": "2026-04-09",
+      "total_value": 968.58,
+      "cash": 968.58,
+      "holdings": {
+        "TSLA": {
+          "shares": 0.0,
+          "avg_cost_basis": 0.0,
+          "current_price": 345.42,
+          "unrealized_pnl": 0.0
+        }
+      },
+      "total_pnl": -31.42,
+      "total_pnl_pct": -3.14,
+      "total_trades": 55,
+      "timestamp": "2026-04-09T20:19:39.017058+00:00"
     }
   ],
   "benchmark": [
@@ -2617,6 +2634,10 @@
     {
       "date": "2026-04-08",
       "value": 834.51
+    },
+    {
+      "date": "2026-04-09",
+      "value": 840.27
     }
   ],
   "trade_journal": [
@@ -3555,6 +3576,11 @@
         "date": "2026-04-08",
         "drawdown_pct": -3.07,
         "peak": 1001.46
+      },
+      {
+        "date": "2026-04-09",
+        "drawdown_pct": -3.28,
+        "peak": 1001.46
       }
     ],
     "rolling_sharpe": [
@@ -3645,6 +3671,10 @@
       {
         "date": "2026-04-08",
         "sharpe": -0.09
+      },
+      {
+        "date": "2026-04-09",
+        "sharpe": -1.42
       }
     ]
   },
@@ -18107,8 +18137,8 @@
     }
   },
   "outcomes_summary": {
-    "total": 4033,
-    "resolved": 4014,
+    "total": 978,
+    "resolved": 959,
     "unresolved": 19
   },
   "daily_pnl": {
@@ -18119,13 +18149,13 @@
   },
   "active_position": {},
   "daily_narrative": {
-    "date": "2026-04-08",
-    "narrative": "**Tesla Market Narrative - Post-Trading Analysis**\n\nTesla closed essentially flat at $343.24 (+0.09%) after another choppy session that saw the stock trade in a wide range. The day's action reflected continued uncertainty around the FSD rollout and mounting analyst pressure, with five trades executed showing mixed results and a net loss of $4.39. Volume patterns suggest institutional hesitancy as the stock remains trapped between technical levels.\n\nThe primary catalyst remains Tesla's FSD v14.3 release, which generated significant buzz with its \"Sentient\" branding and MLIR rewrite promising 20% faster reactions. However, Musk's accompanying claims that FSD is \"10X safer than humans\" drew immediate regulatory scrutiny and lawsuit concerns, creating a classic Tesla dynamic where technological advancement gets overshadowed by regulatory overhang. More damaging was JPMorgan's aggressive downgrade warning of potential 60% downside, with analyst Ryan Brinkman citing overvaluation concerns despite recent registration rebounds in key Asian and European markets.\n\nKey technical levels emerged from today's volatile trading: resistance held firm around $358-360 (where two successful short positions were initiated), while support appeared to solidify near $341-342. The failed long position from $364 suggests any move above $360 faces significant selling pressure. The stock's inability to hold gains above $350 indicates continued institutional distribution despite retail enthusiasm around FSD updates.\n\nActive catalysts heading into tomorrow include ongoing geopolitical tensions affecting broader risk sentiment, with Iran war developments and trade war rhetoric creating macro headwinds. The signal registry shows \"geopolitical\" news carries negative edge (-0.0057), while \"analyst\" coverage also trends bearish (-0.0048). However, \"musk_personal\" signals show positive edge (+0.0075), suggesting his FSD safety claims could generate momentum if regulatory pushback subsides.\n\nThe quantitative signals reveal interesting patterns: \"power_hour\" shows strong positive edge (+0.0131) with high sample size, while \"morning_open\" trends negative (-0.0061). The \"mixed\" intraday regime (+0.0085 edge) aligns with today's choppy action. Notably, \"holding\" positions show negative edge (-0.0145), suggesting the system performs better with quick entries/exits rather than sustained directional bets. Tomorrow's price action may deviate from historical patterns given the unusual combination of major FSD announcement, aggressive analyst downgrade, and ongoing geopolitical uncertainty creating multiple conflicting narratives around the $343 pivot point.",
-    "generated_at": "2026-04-08T20:18:07.957262+00:00",
+    "date": "2026-04-09",
+    "narrative": "**Tesla Treading Water Amid China Headwinds and FSD Drama**\n\nTesla closed essentially flat at $345.59 (+0.06%) in a choppy session that saw the stock oscillate within a narrow $10 range. Trading volume appeared muted as the market digested mixed signals around the company's core growth drivers. The stock found support around $341.50 but couldn't sustain momentum above $350, with seven intraday trades suggesting algorithmic churn rather than conviction moves in either direction.\n\nThe primary catalyst weighing on sentiment was alarming news from Tesla's critical China market. Retail sales crashed 16% year-over-year in Q1, with March alone plunging 24% despite media reports of rising wholesale numbers. This disconnect between wholesale and retail suggests inventory buildup and weakening demand in Tesla's second-largest market. Adding to regulatory uncertainty, Tesla cracked down on unauthorized FSD hacking devices, remotely shutting down access\u2014a move that highlights both the gray market demand for the feature and Tesla's tightening control over its software ecosystem.\n\nThe stock established clear technical levels today: support sits at $341.50 where shorts covered profitably, while resistance emerges around $350-$355 where multiple long attempts failed. The $345-$348 zone appears to be fair value for now, with bears defending the upper end and bulls stepping in on dips to the low $340s.\n\nActive catalysts include ongoing China demand concerns, which could pressure Q1 delivery numbers expected soon. The FSD narrative remains mixed\u2014Musk's latest promises about v15 \"far exceeding\" human safety echo familiar claims about prior versions, suggesting diminishing credibility. Broader geopolitical tensions around trade wars and Iran conflict provide macro headwinds, while competition from traditional automakers launching new EVs intensifies.\n\nThe signal engine shows interesting divergences: \"power_hour\" trades carry positive edge (+0.0075) while \"morning_open\" shows negative edge (-0.0029), suggesting late-day strength patterns may continue. However, the \"holding\" position signal shows negative edge (-0.0145), indicating momentum strategies may struggle. Geopolitical catalysts carry negative edge while Musk-personal news surprisingly shows positive edge, though on limited sample size. The strong intraday-daily divergence signal (-0.0038 edge) suggests tomorrow's price action could deviate from recent patterns, particularly if China concerns intensify overnight.",
+    "generated_at": "2026-04-09T20:20:03.200127+00:00",
     "model": "claude-sonnet-4-20250514"
   },
-  "market_open": true,
-  "time_et": "2026-04-09 15:54 ET",
+  "market_open": false,
+  "time_et": "2026-04-09 16:20 ET",
   "config": {
     "starting_balance": 1000.0,
     "risk_params": {

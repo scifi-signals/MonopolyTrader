@@ -247,6 +247,57 @@ class RiskManager:
         remaining = self.max_stops_per_day - stops
         return False, f"OK ({stops} stops today, {remaining} remaining)"
 
+    def check_earnings_blackout(self, events: dict) -> tuple[bool, str]:
+        """Check if within earnings blackout period.
+
+        Blocks new entries near TSLA earnings — a binary event where
+        the AI has no edge. Existing positions can still be exited
+        (trailing/time/EOD stops run before this check).
+
+        Returns (in_blackout, reason).
+        """
+        config = load_config()
+        blackout = config.get("v8_risk", {}).get("earnings_blackout", {})
+        if not blackout.get("enabled", False):
+            return False, "earnings blackout disabled"
+
+        earnings = events.get("tsla_earnings")
+        if not earnings:
+            return False, "no earnings date available"
+
+        days_until = earnings.get("days_until")
+        if days_until is None:
+            return False, "no days_until in earnings data"
+
+        days_before = blackout.get("days_before", 5)
+        days_after = blackout.get("days_after", 1)
+
+        if days_until < -days_after:
+            return False, f"earnings passed {abs(days_until)} days ago (buffer: {days_after})"
+
+        if days_until > days_before:
+            return False, f"earnings in {days_until} days (blackout starts at {days_before})"
+
+        earnings_date = earnings.get("date", "unknown")
+        if days_until < 0:
+            reason = (
+                f"EARNINGS BLACKOUT: earnings was {abs(days_until)} day(s) ago "
+                f"({earnings_date}) — post-earnings volatility buffer"
+            )
+        elif days_until == 0:
+            reason = (
+                f"EARNINGS BLACKOUT: earnings TODAY ({earnings_date}) "
+                f"— binary event, no edge"
+            )
+        else:
+            reason = (
+                f"EARNINGS BLACKOUT: earnings in {days_until} days "
+                f"({earnings_date}) — observe-only mode, no new positions"
+            )
+
+        logger.warning(reason)
+        return True, reason
+
     def validate_trade(self, action: str, signal: dict,
                        portfolio: dict, price: float,
                        contrarian: bool = False) -> tuple[bool, str]:

@@ -301,6 +301,34 @@ def run_cycle():
                 _update_dashboard(market_data, portfolio)
                 return
 
+        # Earnings blackout — observe only, no new entries
+        # (Exits still allowed — trailing/time/EOD stops already ran above)
+        if not has_active_position():
+            blackout, blackout_reason = risk.check_earnings_blackout(events)
+            if blackout:
+                logger.warning(f"EARNINGS BLACKOUT: {blackout_reason}")
+                logger.info(
+                    f"Observe-only: signal={sig['score']:+.3f} "
+                    f"({sig['direction']}), sizing={sizing['tier']} "
+                    f"— would have {'traded' if sizing['tier'] != 'no_trade' else 'skipped'}"
+                )
+                update_action(cycle_record["id"], "HOLD_EARNINGS_BLACKOUT", {
+                    "source": "earnings_blackout",
+                    "signal_score": sig["score"],
+                    "signal_direction": sig["direction"],
+                    "sizing_tier": sizing["tier"],
+                    "sizing_shares": sizing.get("shares", 0),
+                    "ai_called": False,
+                    "final_action": "HOLD",
+                    "observe_only": True,
+                })
+                _save_latest_cycle(
+                    {"action": "HOLD", "reasoning": blackout_reason},
+                    market_data, regime,
+                )
+                _update_dashboard(market_data, portfolio)
+                return
+
         # 6. Decide — route to AI, contrarian, or skip
         pos_direction = get_position_direction(ticker)
         signal_actionable = abs(sig["score"]) >= risk.min_edge_threshold

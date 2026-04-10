@@ -63,6 +63,12 @@
     },
     "max_stops_per_day": 2,
     "reentry_cooldown_minutes": 60,
+    "earnings_blackout": {
+      "enabled": true,
+      "days_before": 5,
+      "days_after": 1,
+      "mode": "observe_only"
+    },
     "adaptive_cycle": {
       "normal_interval_minutes": 15,
       "position_interval_minutes": 5

@@ -48,7 +48,7 @@
     "time_stop_minutes": 240,
     "eod_close_minutes_before": 10,
     "daily_loss_limit": 50.0,
-    "min_edge_threshold": 0.08,
+    "min_edge_threshold": 0.15,
     "tightening_tiers": [
       [0.05, 0.015],
       [0.03, 0.020],
@@ -61,6 +61,7 @@
       "min_signal_score": -0.40,
       "max_position_pct": 0.05
     },
+    "max_stops_per_day": 2,
     "reentry_cooldown_minutes": 60,
     "adaptive_cycle": {
       "normal_interval_minutes": 15,

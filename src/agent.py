@@ -21,12 +21,15 @@ SYSTEM_PROMPT = """You are MonopolyTrader v8. You add contextual judgment to a q
 The signal engine computes expected edge from historical price data. Your job:
 - If today's context matches historical patterns: AGREE with the signal
 - If news, geopolitics, or catalysts make history unreliable: OVERRIDE with explanation
-- When holding a position: evaluate whether exit criteria are met
+- When holding a long position: evaluate whether to SELL or HOLD
+- When holding a short position: evaluate whether to COVER or HOLD
+- On bullish signals: confirm BUY or override to HOLD
+- On bearish signals in trending markets: confirm SHORT or override to HOLD
 
 You do NOT compute probabilities, set position sizes, or enforce risk rules. Code handles all of that.
 
 Respond ONLY with valid JSON:
-{"action":"BUY|SELL|HOLD","reasoning":"<2-3 sentences>","override":false,"override_reason":null,"stop_pct":1.5,"exit_criteria":"Close if...","confidence":0.5}"""
+{"action":"BUY|SELL|SHORT|COVER|HOLD","reasoning":"<2-3 sentences>","override":false,"override_reason":null,"stop_pct":1.5,"exit_criteria":"Close if...","confidence":0.5}"""
 
 
 def build_market_brief(
@@ -85,10 +88,9 @@ def build_market_brief(
             ((price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0
         )
         parts.append(
-            f"{shares_held:.4f} shares @ ${avg_cost:.2f} "
+            f"LONG {shares_held:.4f} shares @ ${avg_cost:.2f} "
             f"(now ${price:.2f}, {pnl_pct:+.1f}%)"
         )
-        # Show active position stop info
         pos = load_active_position()
         if pos:
             peak = pos.get("peak_price", 0)
@@ -96,6 +98,25 @@ def build_market_brief(
             stop_price = peak * (1 - stop_pct)
             parts.append(
                 f"Stop: ${stop_price:.2f} (peak ${peak:.2f}, {stop_pct:.1%})"
+            )
+            if pos.get("exit_criteria"):
+                parts.append(f"Exit: {pos['exit_criteria']}")
+    elif shares_held < -0.0001:
+        avg_cost = h.get("avg_cost_basis", 0)
+        pnl_pct = (
+            ((avg_cost - price) / avg_cost * 100) if avg_cost > 0 else 0
+        )
+        parts.append(
+            f"SHORT {abs(shares_held):.4f} shares @ ${avg_cost:.2f} "
+            f"(now ${price:.2f}, {pnl_pct:+.1f}%)"
+        )
+        pos = load_active_position()
+        if pos:
+            trough = pos.get("peak_price", 0)
+            stop_pct = pos.get("trailing_stop_pct", 0.015)
+            stop_price = trough * (1 + stop_pct)
+            parts.append(
+                f"Stop: ${stop_price:.2f} (trough ${trough:.2f}, {stop_pct:.1%})"
             )
             if pos.get("exit_criteria"):
                 parts.append(f"Exit: {pos['exit_criteria']}")
@@ -246,7 +267,7 @@ def make_decision(
         config, events, signal, sizing, current_tags, options_data,
     )
 
-    # Add daily narrative to system prompt if available
+    # Add daily narrative + judgment scorecard to system prompt
     system = SYSTEM_PROMPT
     try:
         narrative = load_json(DATA_DIR / "daily_narrative.json", default={})
@@ -256,6 +277,14 @@ def make_decision(
                 + "\n\n=== DAILY NARRATIVE ===\n"
                 + narrative["narrative"][:500]
             )
+    except Exception:
+        pass
+
+    try:
+        from .judgment_scorecard import get_scorecard_for_brief
+        scorecard_text = get_scorecard_for_brief()
+        if scorecard_text:
+            system += "\n\n" + scorecard_text
     except Exception:
         pass
 
@@ -281,7 +310,7 @@ def make_decision(
 
         # Validate
         action = decision.get("action", "HOLD")
-        if action not in ("BUY", "SELL", "HOLD"):
+        if action not in ("BUY", "SELL", "SHORT", "COVER", "HOLD"):
             decision["action"] = "HOLD"
 
         decision["_model_version"] = model_used

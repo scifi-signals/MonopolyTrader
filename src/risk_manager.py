@@ -33,6 +33,7 @@ class RiskManager:
         self.min_edge_threshold = v8.get("min_edge_threshold", 0.001)
         self.eod_close_minutes_before = v8.get("eod_close_minutes_before", 10)
         self.reentry_cooldown_minutes = v8.get("reentry_cooldown_minutes", 60)
+        self.max_stops_per_day = v8.get("max_stops_per_day", 2)
 
         # Progressive tightening tiers: (profit_threshold, stop_pct)
         # Evaluated top-down — first matching tier wins.
@@ -225,6 +226,27 @@ class RiskManager:
         remaining = self.daily_loss_limit + realized
         return False, f"OK (${realized:+.2f} today, ${remaining:.2f} remaining)"
 
+    def check_stop_out_limit(self) -> tuple[bool, str]:
+        """Check if today's stop-out count has hit the circuit breaker.
+
+        Trailing stops and time stops count. EOD closes do not — those are
+        routine risk management, not failed signals.
+        Returns (triggered, reason).
+        """
+        daily = load_daily_pnl()
+        stops = daily.get("stops_today", 0)
+
+        if stops >= self.max_stops_per_day:
+            reason = (
+                f"Stop-out circuit breaker: {stops} stops today "
+                f"(limit: {self.max_stops_per_day}) — market is choppy, done for the day"
+            )
+            logger.warning(reason)
+            return True, reason
+
+        remaining = self.max_stops_per_day - stops
+        return False, f"OK ({stops} stops today, {remaining} remaining)"
+
     def validate_trade(self, action: str, signal: dict,
                        portfolio: dict, price: float,
                        contrarian: bool = False) -> tuple[bool, str]:
@@ -352,8 +374,14 @@ def load_daily_pnl() -> dict:
             "date": today,
             "realized_pnl": 0.0,
             "trades_today": 0,
+            "stops_today": 0,
             "trading_halted": False,
         }
+        save_json(DAILY_PNL_PATH, daily)
+
+    # Backfill stops_today for existing daily records
+    if "stops_today" not in daily:
+        daily["stops_today"] = 0
         save_json(DAILY_PNL_PATH, daily)
 
     return daily
@@ -369,6 +397,14 @@ def record_trade_pnl(realized_pnl: float):
         f"Daily P&L updated: ${daily['realized_pnl']:+.2f} "
         f"({daily['trades_today']} trades today)"
     )
+
+
+def record_stop_out():
+    """Increment today's stop-out count (trailing stop or time stop)."""
+    daily = load_daily_pnl()
+    daily["stops_today"] = daily.get("stops_today", 0) + 1
+    save_json(DAILY_PNL_PATH, daily)
+    logger.info(f"Stop-out recorded: {daily['stops_today']} stops today")
 
 
 def get_daily_pnl_value() -> float:

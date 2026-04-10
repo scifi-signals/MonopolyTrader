@@ -43,6 +43,7 @@ from .risk_manager import (
     RiskManager, save_active_position, clear_active_position,
     update_peak_price, has_active_position, record_trade_pnl,
     load_active_position, record_exit_time, check_reentry_cooldown,
+    record_stop_out,
 )
 from .journal import (
     add_entry as journal_add_entry,
@@ -197,6 +198,7 @@ def run_cycle():
             if result["status"] == "executed":
                 txn = result["transaction"]
                 record_trade_pnl(txn["realized_pnl"])
+                record_stop_out()
                 clear_active_position()
                 _close_journal_for_exit(txn)
                 stop_action = f"{txn['action']}_STOP"
@@ -222,6 +224,7 @@ def run_cycle():
             if result["status"] == "executed":
                 txn = result["transaction"]
                 record_trade_pnl(txn["realized_pnl"])
+                record_stop_out()
                 clear_active_position()
                 _close_journal_for_exit(txn)
                 stop_action = f"{txn['action']}_TIME_STOP"
@@ -279,6 +282,24 @@ def run_cycle():
             )
             _update_dashboard(market_data, portfolio)
             return
+
+        # Check stop-out circuit breaker (2 stops = done for the day)
+        # Only blocks new entries when flat — doesn't force exit on open positions
+        if not has_active_position():
+            stops_hit, stops_reason = risk.check_stop_out_limit()
+            if stops_hit:
+                logger.warning(f"CIRCUIT BREAKER: {stops_reason}")
+                update_action(cycle_record["id"], "HOLD_CIRCUIT_BREAKER", {
+                    "source": "stop_out_limit", "signal_score": sig["score"],
+                    "signal_direction": sig["direction"], "ai_called": False,
+                    "final_action": "HOLD",
+                })
+                _save_latest_cycle(
+                    {"action": "HOLD", "reasoning": stops_reason},
+                    market_data, regime,
+                )
+                _update_dashboard(market_data, portfolio)
+                return
 
         # 6. Decide — route to AI, contrarian, or skip
         pos_direction = get_position_direction(ticker)
@@ -457,7 +478,7 @@ def run_cycle():
         else:
             # Flat + weak/no actionable signal — check for contrarian entry
             is_contrarian, reason = _detect_contrarian(
-                market_data, sig, config
+                market_data, sig, config, tags
             )
 
             if is_contrarian:
@@ -542,12 +563,23 @@ def run_cycle():
         logger.error(f"v8 cycle error: {e}", exc_info=True)
 
 
-def _detect_contrarian(market_data: dict, signal: dict, config: dict) -> tuple[bool, str]:
+def _detect_contrarian(market_data: dict, signal: dict, config: dict,
+                       tags: dict = None) -> tuple[bool, str]:
     """Code-driven contrarian entry detection. No AI involved.
 
     Triggers when RSI is oversold AND the signal isn't catastrophically
-    bearish. Returns (is_contrarian, reason).
+    bearish AND the regime isn't confirmed bearish. Returns (is_contrarian, reason).
     """
+    # Regime gate: never auto-buy into a confirmed bear trend
+    if tags:
+        trend_dir = tags.get("trend_direction", "")
+        trend = tags.get("trend", "")
+        if trend_dir == "down" or trend == "bear":
+            return False, (
+                f"Regime gate: trend_direction={trend_dir}, trend={trend} — "
+                f"no contrarian BUY in confirmed bear regime"
+            )
+
     indicators = market_data.get("daily_indicators", {})
     rsi = indicators.get("rsi_14", 50)
     score = signal.get("score", 0)

@@ -330,8 +330,8 @@ def update_intra_trade_prices(current_price: float, ticker: str) -> bool:
     updated = False
 
     for entry in entries:
-        # Only update open (unclosed) BUY entries for this ticker
-        if (entry.get("action") != "BUY"
+        # Only update open (unclosed) BUY/SHORT entries for this ticker
+        if (entry.get("action") not in ("BUY", "SHORT")
             or entry.get("ticker") != ticker
             or entry.get("lesson") is not None):
             continue
@@ -351,7 +351,10 @@ def update_intra_trade_prices(current_price: float, ticker: str) -> bool:
         if "trough_unrealized_pnl" not in entry:
             entry["trough_unrealized_pnl"] = 0.0
 
-        current_unrealized = round((current_price - entry_price) * shares, 2)
+        if entry.get("action") == "SHORT":
+            current_unrealized = round((entry_price - current_price) * shares, 2)
+        else:
+            current_unrealized = round((current_price - entry_price) * shares, 2)
 
         if current_price > entry.get("peak_price", entry_price):
             entry["peak_price"] = round(current_price, 2)

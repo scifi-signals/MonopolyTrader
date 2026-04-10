@@ -73,9 +73,15 @@ def update_market_price(portfolio: dict, ticker: str, current_price: float) -> d
     h = portfolio["holdings"][ticker]
     h["current_price"] = round(current_price, 2)
 
-    if h["shares"] > 0:
+    if h["shares"] > 0.0001:
+        # Long position: profit when price rises
         h["unrealized_pnl"] = round(
             (current_price - h["avg_cost_basis"]) * h["shares"], 2
+        )
+    elif h["shares"] < -0.0001:
+        # Short position: profit when price drops
+        h["unrealized_pnl"] = round(
+            (h["avg_cost_basis"] - current_price) * abs(h["shares"]), 2
         )
     else:
         h["unrealized_pnl"] = 0.0
@@ -96,12 +102,13 @@ def update_market_price(portfolio: dict, ticker: str, current_price: float) -> d
 
 
 def validate_trade(action: str, shares: float, price: float, portfolio: dict, config: dict = None) -> tuple[bool, str]:
-    """Check if a trade passes v4 risk rules. Returns (ok, reason).
+    """Check if a trade passes risk rules. Returns (ok, reason).
 
-    v4 rules (simple):
-    - Max 50% of portfolio value in any position
+    Rules:
+    - Max 50% of portfolio value in any position (long or short)
     - Keep $100 cash minimum
     - Shares must be positive
+    - Can't short while holding long (or vice versa)
     """
     if config is None:
         config = load_config()
@@ -138,6 +145,31 @@ def validate_trade(action: str, shares: float, price: float, portfolio: dict, co
         held = portfolio["holdings"].get(ticker, {}).get("shares", 0)
         if shares > held:
             return False, f"Can't sell {shares:.4f} shares, only hold {held:.4f}"
+
+    elif action == "SHORT":
+        # Can't short while holding long
+        held = portfolio["holdings"].get(ticker, {}).get("shares", 0)
+        if held > 0.0001:
+            return False, f"Can't short while holding {held:.4f} long shares"
+        if held < -0.0001:
+            return False, f"Already short {abs(held):.4f} shares"
+
+        # Max position size: 50% of portfolio
+        max_position_pct = risk.get("max_position_pct", 0.50)
+        max_position = portfolio["total_value"] * max_position_pct
+        if total_cost > max_position:
+            return False, f"Short position ${total_cost:.2f} exceeds max ${max_position:.2f} ({max_position_pct*100:.0f}%)"
+
+    elif action == "COVER":
+        held = portfolio["holdings"].get(ticker, {}).get("shares", 0)
+        if held >= -0.0001:
+            return False, "No short position to cover"
+        if shares > abs(held) + 0.0001:
+            return False, f"Can't cover {shares:.4f} shares, only short {abs(held):.4f}"
+        # Need cash to buy back
+        if total_cost > portfolio["cash"]:
+            return False, f"Insufficient cash to cover: need ${total_cost:.2f}, have ${portfolio['cash']:.2f}"
+
     else:
         return False, f"Unknown action: {action}"
 
@@ -145,21 +177,18 @@ def validate_trade(action: str, shares: float, price: float, portfolio: dict, co
 
 
 def execute_trade(action: str, shares: float, price: float, decision: dict = None) -> dict:
-    """Execute a simulated trade. Returns the transaction record.
-
-    v4: simplified. No trade_context, no constraints. Claude decided, we execute.
-    """
+    """Execute a simulated trade (BUY/SELL/SHORT/COVER). Returns the transaction record."""
     config = load_config()
     ticker = config["ticker"]
     portfolio = load_portfolio()
     transactions = load_transactions()
 
-    # Apply flat slippage
+    # Apply flat slippage (buying = worse price up, selling = worse price down)
     risk = config["risk_params"]
     slippage = risk.get("slippage_per_side_pct", 0.0005)
-    if action == "BUY":
+    if action in ("BUY", "COVER"):
         exec_price = round(price * (1 + slippage), 2)
-    else:
+    else:  # SELL, SHORT
         exec_price = round(price * (1 - slippage), 2)
 
     # Validate
@@ -182,6 +211,7 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         h["shares"] = round(h["shares"] + shares, 6)
         h["avg_cost_basis"] = round(new_total / h["shares"], 2) if h["shares"] > 0 else 0.0
         portfolio["cash"] = round(portfolio["cash"] - total_cost, 2)
+
     elif action == "SELL":
         realized_pnl = round((exec_price - h["avg_cost_basis"]) * shares, 2)
         h["shares"] = round(h["shares"] - shares, 6)
@@ -190,15 +220,29 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
             h["avg_cost_basis"] = 0.0
         portfolio["cash"] = round(portfolio["cash"] + total_cost, 2)
 
+    elif action == "SHORT":
+        # Open short: sell borrowed shares, receive cash, hold negative shares
+        h["shares"] = round(h["shares"] - shares, 6)
+        h["avg_cost_basis"] = round(exec_price, 2)
+        portfolio["cash"] = round(portfolio["cash"] + total_cost, 2)
+
+    elif action == "COVER":
+        # Close short: buy back shares, spend cash
+        realized_pnl = round((h["avg_cost_basis"] - exec_price) * shares, 2)
+        h["shares"] = round(h["shares"] + shares, 6)
+        if abs(h["shares"]) < 0.0001:
+            h["shares"] = 0.0
+            h["avg_cost_basis"] = 0.0
+        portfolio["cash"] = round(portfolio["cash"] - total_cost, 2)
+
     portfolio = update_market_price(portfolio, ticker, exec_price)
     portfolio["total_trades"] += 1
-    if action == "SELL":
+    if action in ("SELL", "COVER"):
         if realized_pnl >= 0:
             portfolio["winning_trades"] += 1
         else:
             portfolio["losing_trades"] += 1
 
-    # Build transaction record (simplified for v4)
     txn_id = generate_id("txn", [t["id"] for t in transactions])
     txn = {
         "id": txn_id,
@@ -208,7 +252,7 @@ def execute_trade(action: str, shares: float, price: float, decision: dict = Non
         "shares": shares,
         "price": exec_price,
         "total_cost": total_cost,
-        "realized_pnl": realized_pnl if action == "SELL" else None,
+        "realized_pnl": realized_pnl if action in ("SELL", "COVER") else None,
         "cash_after": portfolio["cash"],
         "portfolio_value_after": portfolio["total_value"],
         "confidence": decision.get("confidence", 0) if decision else 0,
@@ -257,7 +301,7 @@ def get_portfolio_summary() -> dict:
 
     realized_pnl = sum(
         t.get("realized_pnl", 0) or 0
-        for t in transactions if t["action"] == "SELL"
+        for t in transactions if t["action"] in ("SELL", "COVER")
     )
 
     unrealized_pnl = sum(
@@ -280,7 +324,7 @@ def get_portfolio_summary() -> dict:
 
 
 def execute_stop_exit(ticker: str, price: float, reason: str) -> dict:
-    """Execute a code-triggered stop exit. Sells all shares at current price.
+    """Execute a code-triggered stop exit. Closes all shares (long or short).
 
     Called by risk manager (trailing stop, time stop), not by AI.
     """
@@ -288,14 +332,21 @@ def execute_stop_exit(ticker: str, price: float, reason: str) -> dict:
     holdings = portfolio.get("holdings", {}).get(ticker, {})
     shares = holdings.get("shares", 0)
 
-    if shares <= 0:
-        logger.info(f"Stop exit skipped — no {ticker} shares to sell")
-        return {"status": "rejected", "reason": "no shares to sell"}
+    if abs(shares) < 0.0001:
+        logger.info(f"Stop exit skipped — no {ticker} position to close")
+        return {"status": "rejected", "reason": "no position to close"}
 
-    logger.warning(f"STOP EXIT: selling {shares:.4f} {ticker} @ ${price:.2f} — {reason}")
+    if shares > 0:
+        action = "SELL"
+        exit_shares = shares
+    else:
+        action = "COVER"
+        exit_shares = abs(shares)
+
+    logger.warning(f"STOP EXIT: {action} {exit_shares:.4f} {ticker} @ ${price:.2f} — {reason}")
     return execute_trade(
-        action="SELL",
-        shares=shares,
+        action=action,
+        shares=exit_shares,
         price=price,
         decision={"reasoning": reason, "confidence": 0, "strategy": "stop_exit"},
     )
@@ -319,3 +370,17 @@ def save_snapshot():
     }
     save_json(snapshot_path, snapshot)
     logger.info(f"Saved snapshot: {today} — value ${portfolio['total_value']:.2f}")
+
+
+def get_position_direction(ticker: str = None) -> str | None:
+    """Return 'long', 'short', or None based on current holdings."""
+    if ticker is None:
+        config = load_config()
+        ticker = config["ticker"]
+    portfolio = load_portfolio()
+    shares = portfolio.get("holdings", {}).get(ticker, {}).get("shares", 0)
+    if shares > 0.0001:
+        return "long"
+    elif shares < -0.0001:
+        return "short"
+    return None

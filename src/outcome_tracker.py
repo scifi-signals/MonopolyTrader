@@ -80,17 +80,35 @@ def log_cycle(price: float, tags: dict, action: str = "pending") -> dict:
     return record
 
 
-def update_action(cycle_id: str, action: str):
-    """Update the action_taken field for a cycle (called after decision)."""
+def update_action(cycle_id: str, action: str, decision_meta: dict = None):
+    """Update the action_taken field for a cycle (called after decision).
+
+    Args:
+        cycle_id: Cycle record ID
+        action: Final action taken (BUY, SELL, HOLD, HOLD_NO_SIGNAL, etc.)
+        decision_meta: Optional dict with decision context for judgment scorecard:
+            source: code path (ai_confirm, ai_exit, code_skip, code_contrarian,
+                    stop_trailing, stop_time, hold_loss_limit)
+            signal_score: composite signal at decision time
+            signal_direction: bullish/bearish/neutral
+            ai_called: whether AI was invoked
+            ai_action: what AI recommended (if called)
+            ai_confidence: AI's confidence (if called)
+            final_action: what actually executed
+    """
     outcomes = _load_outcomes()
     for o in reversed(outcomes):
         if o["id"] == cycle_id:
             o["action_taken"] = action
+            if decision_meta:
+                o["decision_meta"] = decision_meta
             _save_outcomes(outcomes)
             return
         # Also match "pending" as the most recent
         if cycle_id == "pending" and o.get("action_taken") == "pending":
             o["action_taken"] = action
+            if decision_meta:
+                o["decision_meta"] = decision_meta
             _save_outcomes(outcomes)
             return
 

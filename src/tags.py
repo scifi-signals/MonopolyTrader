@@ -112,6 +112,9 @@ def compute_tags(
     # Regime age (v7) — how long the current regime has been active
     regime_age_tag = _compute_regime_age()
 
+    # SMA20 for shorter-term trend context
+    sma20 = daily.get("sma_20", 0)
+
     return {
         "rsi_zone": (
             "oversold" if rsi < 30
@@ -119,6 +122,12 @@ def compute_tags(
             else "neutral"
         ),
         "trend": "above_sma50" if (sma50 > 0 and price > sma50) else "below_sma50",
+        "trend_direction": regime.get("trend", "sideways"),
+        "sma20_position": (
+            "above_sma20" if (sma20 > 0 and price > sma20)
+            else "below_sma20" if sma20 > 0
+            else "no_data"
+        ),
         "volatility": (
             "low_vix" if vix < 18
             else "high_vix" if vix > 25
